@@ -1,4 +1,6 @@
 const path = require('path');
+// 注意：此脚本依赖 Codex 浏览器插件，是 Codex 时代的一次性调试脚本，ZCode 侧不可直接运行。
+// 保留作历史归档，URL 已更新为 Netlify 生产域名。
 const browserClientPath = 'C:/Users/qi.lu/.codex/plugins/cache/openai-bundled/browser/26.707.61608/scripts/browser-client.mjs';
 
 async function main() {
@@ -15,9 +17,9 @@ async function main() {
   if (tabs.length > 0) {
     tab = tabs[0];
     console.log('Using existing tab:', tab.url || 'no url');
-    await tab.navigate('https://bd-todolist.vercel.app');
+    await tab.navigate('https://bdtolist.netlify.app');
   } else {
-    tab = await iab.tabs.create('https://bd-todolist.vercel.app');
+    tab = await iab.tabs.create('https://bdtolist.netlify.app');
     console.log('Created new tab');
   }
 
