@@ -32,18 +32,16 @@ export function CardName({ name, hasContent, onRenameBtnClick, onDelete, onClick
   ];
 
   return (
-    <>
-      <div className="flex items-center gap-1 min-w-0 flex-1">
-        <button
-          type="button"
-          onClick={onClick}
-          className="text-left text-sm font-medium truncate hover:text-accent transition-colors min-w-0"
-          title={name}
-        >
-          {name}
-        </button>
-      </div>
-      <div className="header-buttons flex items-center gap-0.5 shrink-0">
+    <div className="flex items-center gap-1 min-w-0 w-full">
+      <button
+        type="button"
+        onClick={onClick}
+        className="text-left text-sm font-medium truncate flex-1 min-w-0 hover:text-accent transition-colors"
+        title={name}
+      >
+        {name}
+      </button>
+      <div className="header-buttons flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
         <button
           type="button"
           onClick={openMenu}
@@ -61,6 +59,6 @@ export function CardName({ name, hasContent, onRenameBtnClick, onDelete, onClick
         onClose={() => setMenuOpen(false)}
         id={`card-name-menu-${name}`}
       />
-    </>
+    </div>
   );
 }

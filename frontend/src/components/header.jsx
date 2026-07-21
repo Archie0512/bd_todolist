@@ -31,7 +31,7 @@ const SORT_OPTIONS = [
   { value: "createdFirst:asc", key: "header.sort.createdFirst" },
 ];
 
-const VIEW_MODES = ["extended", "regular", "compact", "tight"];
+const VIEW_MODES = ["extended", "compact", "tight"];
 
 const LOCALES = [
   { value: "zh", label: "中文" },
@@ -129,7 +129,7 @@ export function Header({
           </span>
           <select
             value={viewMode}
-            onChange={(e) => onViewModeChange(e.target.value)}
+            onChange={onViewModeChange}
             className="input py-1 text-sm"
           >
             {VIEW_MODES.map((mode) => (

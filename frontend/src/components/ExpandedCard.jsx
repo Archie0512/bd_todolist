@@ -36,7 +36,6 @@ import {
 } from "../lib/card-content-utils.js";
 import { markdownToHtml, htmlToMarkdown } from "../lib/markdown.js";
 import { uploadImage } from "../lib/upload-image.js";
-import { ShimmerButton } from "./react-bits/ShimmerButton.jsx";
 import { TiltedCard } from "./react-bits/TiltedCard.jsx";
 import { StatusActionDialog } from "./StatusActionDialog.jsx";
 import { StatusLogTimeline } from "./StatusLogTimeline.jsx";
@@ -287,23 +286,26 @@ export function ExpandedCard({
             </TiltedCard>
 
             <div className="flex items-center gap-1 shrink-0">
-              {/* 完成/退回按钮（仅登录可见） */}
+              {/* 完成/退回按钮（仅登录可见，样式统一） */}
               {isAdmin && (
                 <>
-                  <ShimmerButton
+                  <button
+                    type="button"
                     onClick={handleCompleteClick}
-                    className="px-3 py-1.5 text-sm"
+                    className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-white transition-all hover:brightness-110 active:scale-95"
+                    style={{ backgroundColor: "var(--color-alt-5)" }}
                     title={t("expandedCard.complete")}
                   >
                     <Check size={14} />
                     <span className="hidden md:inline">
                       {t("expandedCard.complete")}
                     </span>
-                  </ShimmerButton>
+                  </button>
                   <button
                     type="button"
                     onClick={handleReturnClick}
-                    className="btn btn--ghost text-sm"
+                    className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-white transition-all hover:brightness-110 active:scale-95"
+                    style={{ backgroundColor: "var(--color-alt-3)" }}
                     title={t("expandedCard.return")}
                   >
                     <Undo2 size={14} />

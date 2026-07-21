@@ -8,6 +8,13 @@ import { persist } from "zustand/middleware";
 // 仅持久化以下字段到 localStorage
 const PERSIST_KEYS = ["sort", "sortDirection", "filteredTag", "viewMode", "theme"];
 
+// 视图模式兼容映射（v2 已移除 regular，降级到 compact）
+function normalizeViewMode(mode) {
+  if (mode === "regular") return "compact";
+  if (["extended", "compact", "tight"].includes(mode)) return mode;
+  return "tight";
+}
+
 export const useUiStore = create(
   persist(
     (set, get) => ({
@@ -15,7 +22,7 @@ export const useUiStore = create(
       sort: "none", // none | name | tags | due | lastUpdated | createdFirst
       sortDirection: "asc",
       filteredTag: null,
-      viewMode: "tight", // extended | regular | compact | tight
+      viewMode: "tight", // extended | compact | tight（regular 已移除，降级到 compact）
       theme: "auto", // auto | light | dark
 
       // ===== 临时 UI 字段（不持久化） =====
@@ -41,7 +48,7 @@ export const useUiStore = create(
         }
       },
       setFilteredTag: (tag) => set({ filteredTag: tag }),
-      setViewMode: (mode) => set({ viewMode: mode }),
+      setViewMode: (mode) => set({ viewMode: normalizeViewMode(mode) }),
       setTheme: (theme) => set({ theme }),
 
       setSelectionMode: (mode) =>
@@ -90,6 +97,12 @@ export const useUiStore = create(
           return acc;
         }, {}),
       // Set 不能直接 JSON 序列化，但 PERSIST_KEYS 不含 selectedCards，所以无需自定义 storage
+      // 加载持久化数据后做兼容映射（如已存的 regular -> compact）
+      onRehydrateStorage: () => (state) => {
+        if (state && state.viewMode) {
+          state.viewMode = normalizeViewMode(state.viewMode);
+        }
+      },
     }
   )
 );

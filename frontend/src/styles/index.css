@@ -204,30 +204,63 @@
   color: var(--color-foreground);
 }
 
-/* ==================== 视图密度变体 ==================== */
+/* ==================== 视图密度变体 ====================
+   3 种视图模式展示不同信息层级：
+   - extended（展开）：标题 + 标签 + 内容预览（3 行）+ 截止日期，padding 最大
+   - compact（紧凑）：标题 + 标签 + 截止日期，不显示内容预览，padding 中等
+   - tight（极简）：仅标题，标签和截止日期都隐藏，padding 最小
+   regular 已废弃（自动降级到 compact）
+*/
+.view-mode-extended .card {
+  @apply p-4 text-base;
+}
+.view-mode-extended .card__name {
+  @apply text-base font-semibold;
+}
+.view-mode-extended .card__content {
+  @apply line-clamp-3;
+}
+.view-mode-extended .card__tags,
+.view-mode-extended .card__due-date,
+.view-mode-extended .card__content {
+  display: flex;
+}
+
+.view-mode-compact .card {
+  @apply p-2.5 text-sm;
+}
+.view-mode-compact .card__name {
+  @apply text-sm font-medium;
+}
+.view-mode-compact .card__tags,
+.view-mode-compact .card__due-date {
+  display: flex;
+}
+.view-mode-compact .card__content {
+  display: none;
+}
+
 .view-mode-tight .card {
   @apply p-2 text-xs;
 }
 .view-mode-tight .card__name {
   @apply text-xs font-medium;
 }
+.view-mode-tight .card__tags,
+.view-mode-tight .card__due-date,
+.view-mode-tight .card__content {
+  display: none;
+}
 .view-mode-tight .tag {
   @apply px-1.5 py-0 text-[10px];
 }
 
-.view-mode-compact .card {
+/* 兼容：regular 已废弃，行为同 compact */
+.view-mode-regular .card {
   @apply p-2.5 text-sm;
 }
-
-.view-mode-regular .card {
-  @apply p-3 text-sm;
-}
-
-.view-mode-extended .card {
-  @apply p-4 text-base;
-}
-.view-mode-extended .card__content {
-  @apply line-clamp-3;
+.view-mode-regular .card__content {
+  display: none;
 }
 
 /* ==================== 拖拽视觉反馈 ==================== */

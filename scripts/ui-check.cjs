@@ -1,8 +1,24 @@
 /**
  * 自动化 UI 自检脚本：访问本地 dev 服务器，检查页面是否正常渲染、有无运行时错误
- * 用法：node scripts/ui-check.cjs
+ * 用法：npm run ui-check  （在 frontend/ 下，默认 URL=http://localhost:3000/）
+ *       或 URL=http://localhost:3002/ node scripts/ui-check.cjs
+ *
+ * playwright 装在 frontend/node_modules，需要让本脚本能找到它
  */
-const { chromium } = require("playwright");
+const path = require("path");
+const fs = require("fs");
+
+// 尝试多个 playwright 位置
+const playwrightPaths = [
+  path.resolve(__dirname, "../frontend/node_modules/playwright"),
+  path.resolve(__dirname, "../node_modules/playwright"),
+];
+let playwrightPath = playwrightPaths.find((p) => fs.existsSync(p));
+if (!playwrightPath) {
+  console.error("未找到 playwright，请在 frontend/ 下运行 npm install -D playwright");
+  process.exit(1);
+}
+const { chromium } = require(playwrightPath);
 
 const URL = process.env.URL || "http://localhost:3001/";
 

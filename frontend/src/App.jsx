@@ -65,7 +65,7 @@ function Lane({ lane, index, cardsInLane, disableCardsDrag, ...handlers }) {
   return (
     <SortableLane lane={lane} index={index} disableDrag={disableCardsDrag}>
       <div
-        className="lane flex flex-col w-72 min-w-[18rem] bg-bg-2 rounded-lg border border-bg-3"
+        className="lane flex flex-col w-72 min-w-[18rem] max-h-full bg-bg-2 rounded-lg border border-bg-3"
         id={`lane-${lane}`}
         tabIndex={0}
         onFocus={() => handlers.onLaneFocus(index)}
@@ -839,12 +839,12 @@ function App() {
         onDragEnd={handleDragEnd}
         onDragCancel={handleDragCancel}
       >
-        <div className="lanes flex-1 overflow-x-auto overflow-y-hidden p-4">
+        <div className="lanes flex-1 overflow-auto p-4">
           <SortableContext
             items={lanes.map((l) => `lane-${l}`)}
             strategy={horizontalListSortingStrategy}
           >
-            <div className="flex gap-3 h-full">
+            <div className="flex gap-3 h-full items-stretch">
               {lanes.map((lane, index) => (
                 <Lane
                   key={lane}
