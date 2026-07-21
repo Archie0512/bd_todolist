@@ -311,7 +311,11 @@ export const useBoardStore = create((set, get) => ({
         }
         return laneCards;
       });
-      return { cards: newCards };
+      // 防丢失：若某卡片因 lane 字段不在 state.lanes 里（数据异常/重命名进行中），
+      // flatMap 会丢掉它，这里把未处理的卡片追加到末尾
+      const seenIds = new Set(newCards.map((c) => c.id));
+      const leftover = state.cards.filter((c) => !seenIds.has(c.id));
+      return { cards: [...newCards, ...leftover] };
     });
 
     // 后台保存

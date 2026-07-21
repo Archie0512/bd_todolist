@@ -88,6 +88,9 @@ export function ExpandedCard({
     return (card?.tags || []).map((t) => t.name);
   }, [card?.tags]);
 
+  // 记录「最近一次由 onUpdate 自己写入的 MD」，防止 onUpdate -> store -> useEffect -> setContent 死循环
+  const lastSelfUpdateMd = useRef("");
+
   // TipTap 编辑器
   const editor = useEditor({
     extensions: [
@@ -104,19 +107,25 @@ export function ExpandedCard({
     content: markdownToHtml(card?.content || ""),
     editable: true,
     onUpdate: ({ editor: ed }) => {
-      // 转 Markdown 回传 store
+      // 转 Markdown 回传 store，并记录本次写入的值
       const md = htmlToMarkdown(ed.getHTML());
+      lastSelfUpdateMd.current = md;
       updateCardContent(card.id, md);
     },
   });
 
-  // 外部 content 变化时同步编辑器（避免循环：仅当 MD 不一致时才更新）
+  // 外部 content 变化时同步编辑器
+  // 关键：跳过由 onUpdate 自己触发的回环（lastSelfUpdateMd），避免死循环 + 光标跳动
   useEffect(() => {
     if (!editor || !card) return;
+    // 如果这个 content 是我们自己刚写入的，跳过
+    if (card.content === lastSelfUpdateMd.current) return;
+    // 外部真实变更（如切卡片、标签操作改了 content），才同步到编辑器
     const currentMd = htmlToMarkdown(editor.getHTML());
     if (currentMd !== card.content) {
       editor.commands.setContent(markdownToHtml(card.content || ""), false);
     }
+    lastSelfUpdateMd.current = card.content;
   }, [card?.content, editor, card?.id]);
 
   // 点击图片放大

@@ -291,10 +291,10 @@ function App() {
         sorted.sort((a, b) => (a.dueDate || "z").localeCompare(b.dueDate || "z") * dir);
         break;
       case "lastUpdated":
-        sorted.sort((a, b) => (b.lastUpdated || "").localeCompare(a.lastUpdated || ""));
+        sorted.sort((a, b) => (a.lastUpdated || "").localeCompare(b.lastUpdated || "") * dir);
         break;
       case "createdFirst":
-        sorted.sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
+        sorted.sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || "") * dir);
         break;
       default:
         break;
@@ -552,7 +552,9 @@ function App() {
     }
   }, [focusedCardId, focusedLaneIndex, lanes]);
 
-  const disableCardsDrag = sort !== "none" || selectionMode;
+  // 筛选/搜索时禁用拖拽：筛选后列表是子集，索引与全量数组不对应，拖拽会污染 sort_order
+  const disableCardsDrag =
+    sort !== "none" || selectionMode || !!search || !!filteredTag;
 
   // ===== 键盘导航 =====
   const handleMainBoardKeyDown = (e) => {
