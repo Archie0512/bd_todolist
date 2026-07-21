@@ -1,0 +1,241 @@
+@import "./color-themes/adwaita.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ==================== 基础重置与全局样式 ==================== */
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    font-family: theme("fontFamily.sans");
+    background-color: var(--color-background-1);
+    color: var(--color-foreground);
+    transition:
+      background-color 0.2s ease,
+      color 0.2s ease;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  button {
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  input,
+  select,
+  textarea {
+    font-family: inherit;
+  }
+
+  a {
+    color: var(--color-accent);
+    text-decoration: none;
+  }
+
+  /* 滚动条样式 */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-background-4);
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-accent);
+  }
+
+  /* 可访问性：减少动画 */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+/* ==================== 通用组件层 ==================== */
+@layer components {
+  /* 按钮基础 */
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium
+           transition-all duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent
+           disabled:cursor-not-allowed disabled:opacity-50;
+    background-color: var(--color-background-3);
+    color: var(--color-foreground);
+  }
+  .btn:hover:not(:disabled) {
+    background-color: var(--color-background-4);
+  }
+  .btn:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+  .btn--primary {
+    background-color: var(--color-accent);
+    color: #fff;
+  }
+  .btn--primary:hover:not(:disabled) {
+    filter: brightness(1.1);
+    background-color: var(--color-accent);
+  }
+  .btn--danger {
+    background-color: var(--color-alt-1);
+    color: #fff;
+  }
+  .btn--ghost {
+    background-color: transparent;
+  }
+  .btn--ghost:hover:not(:disabled) {
+    background-color: var(--color-background-3);
+  }
+
+  /* 输入框基础 */
+  .input {
+    @apply rounded-md px-3 py-1.5 text-sm transition-colors focus:outline-none
+           focus-visible:ring-2 focus-visible:ring-accent;
+    background-color: var(--color-background-3);
+    color: var(--color-foreground);
+    border: 1px solid var(--color-background-4);
+  }
+  .input::placeholder {
+    color: var(--color-foreground);
+    opacity: 0.5;
+  }
+
+  /* 标签 */
+  .tag {
+    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+    background-color: var(--color-background-4);
+    color: var(--color-foreground);
+  }
+
+  /* 卡片 */
+  .card {
+    @apply rounded-lg p-3 transition-all duration-150;
+    background-color: var(--color-background-3);
+    border: 1px solid transparent;
+  }
+  .card:hover {
+    border-color: var(--color-accent);
+  }
+
+  /* 对话框背景遮罩 */
+  .dialog-backdrop {
+    @apply fixed inset-0 z-50 flex items-center justify-center p-4;
+    background-color: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(2px);
+  }
+}
+
+/* ==================== TipTap 编辑器样式 ==================== */
+.ProseMirror {
+  @apply outline-none min-h-[200px] p-3 rounded-md;
+  background-color: var(--color-background-2);
+  color: var(--color-foreground);
+}
+.ProseMirror p {
+  @apply my-2;
+}
+.ProseMirror h1 {
+  @apply text-xl font-bold my-3;
+}
+.ProseMirror h2 {
+  @apply text-lg font-bold my-2;
+}
+.ProseMirror h3 {
+  @apply text-base font-semibold my-2;
+}
+.ProseMirror ul {
+  @apply list-disc pl-6 my-2;
+}
+.ProseMirror ol {
+  @apply list-decimal pl-6 my-2;
+}
+.ProseMirror code {
+  @apply px-1 py-0.5 rounded text-sm font-mono;
+  background-color: var(--color-background-4);
+}
+.ProseMirror pre {
+  @apply p-3 rounded-md my-2 overflow-x-auto;
+  background-color: var(--color-background-1);
+}
+.ProseMirror pre code {
+  background-color: transparent;
+  padding: 0;
+}
+.ProseMirror blockquote {
+  @apply border-l-4 pl-4 my-2 italic opacity-80;
+  border-color: var(--color-accent);
+}
+.ProseMirror a {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+.ProseMirror img {
+  @apply max-w-full rounded-md my-2 cursor-zoom-in;
+  transition: transform 0.2s;
+}
+.ProseMirror img:hover {
+  transform: scale(1.02);
+}
+.ProseMirror .is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  @apply pointer-events-none float-left h-0 opacity-50;
+  color: var(--color-foreground);
+}
+
+/* ==================== 视图密度变体 ==================== */
+.view-mode-tight .card {
+  @apply p-2 text-xs;
+}
+.view-mode-tight .card__name {
+  @apply text-xs font-medium;
+}
+.view-mode-tight .tag {
+  @apply px-1.5 py-0 text-[10px];
+}
+
+.view-mode-compact .card {
+  @apply p-2.5 text-sm;
+}
+
+.view-mode-regular .card {
+  @apply p-3 text-sm;
+}
+
+.view-mode-extended .card {
+  @apply p-4 text-base;
+}
+.view-mode-extended .card__content {
+  @apply line-clamp-3;
+}
+
+/* ==================== 拖拽视觉反馈 ==================== */
+.being-dragged {
+  @apply opacity-50 cursor-grabbing;
+  transform: scale(0.98);
+}
+.dragging-over {
+  border-color: var(--color-accent) !important;
+  background-color: color-mix(in srgb, var(--color-accent) 10%, var(--color-background-3));
+}

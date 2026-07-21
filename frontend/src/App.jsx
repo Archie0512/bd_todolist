@@ -1,535 +1,473 @@
+/**
+ * App 主组件：
+ * - 编排 Header / BulkToolbar / Lanes / ExpandedCard / 对话框
+ * - 键盘导航（h/j/k/l、方向键、Alt+方向移动、n/r/d/e/?/Esc）
+ * - URL 路由：/<cardname>.md 打开 ExpandedCard
+ */
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import {
-  createSignal,
-  For,
-  Show,
-  onMount,
-  createMemo,
-  createEffect,
-  createResource,
-  batch,
-} from "solid-js";
-import ExpandedCard from "./components/expanded-card";
-import { debounce } from "@solid-primitives/scheduled";
-import { supabase, fetchLanes, fetchCards, fetchTags, createCard, updateCardContent as supaUpdateContent, moveCard as supaMoveCard, renameCard as supaRenameCard, deleteCard as supaDeleteCard, createLane as supaCreateLane, renameLane as supaRenameLane, deleteLane as supaDeleteLane, updateLaneSort, updateCardSort, signIn, signOut, isAdmin, parseTagsFromContent, parseDueDateFromContent } from "./supabase-client";
-import { LaneName } from "./components/lane-name";
-import { NameInput } from "./components/name-input";
-import { Header } from "./components/header";
-import { Card } from "./components/card";
-import { CardName } from "./components/card-name";
-import { BulkOperationsToolbar } from "./components/bulk-operations-toolbar";
-import { makePersisted } from "@solid-primitives/storage";
-import { DragAndDrop } from "./components/drag-and-drop";
-import { useLocation, useNavigate } from "@solidjs/router";
-import { v7 } from "uuid";
-import { addTagToContent, removeTagFromContent, setDueDateInContent, getTagsFromContent } from "./card-content-utils";
-import "./stylesheets/index.css";
-import { KeyboardNavigationDialog } from "./components/keyboard-navigation-dialog";
-import { useI18n } from "./i18n";
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  KeyboardSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  pointerWithin,
+  useDroppable,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  horizontalListSortingStrategy,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { SortableLane, SortableCard } from "./components/Sortable.jsx";
+import { Header } from "./components/Header.jsx";
+import { BulkOperationsToolbar } from "./components/BulkOperationsToolbar.jsx";
+import { LaneName } from "./components/LaneName.jsx";
+import { Card } from "./components/Card.jsx";
+import { CardName } from "./components/CardName.jsx";
+import { NameInput } from "./components/NameInput.jsx";
+import { ExpandedCard } from "./components/ExpandedCard.jsx";
+import { LoginDialog } from "./components/LoginDialog.jsx";
+import { KeyboardHelpDialog } from "./components/KeyboardHelpDialog.jsx";
+import { useBoardStore } from "./store/board-store.js";
+import { useAuthStore } from "./store/auth-store.js";
+import { useUiStore, applyTheme } from "./store/ui-store.js";
+
+// 读取 URL 后缀（.md = 打开卡片）
+function useSelectedCard() {
+  const location = useLocation();
+  const cards = useBoardStore((s) => s.cards);
+  return useMemo(() => {
+    let pathname = location.pathname;
+    if (pathname.endsWith("/")) {
+      pathname = pathname.slice(0, -1);
+    }
+    if (!pathname.endsWith(".md")) return null;
+    const cardName = decodeURIComponent(pathname.split("/").pop().replace(/\.md$/, ""));
+    return cards.find((c) => c.name === cardName) || null;
+  }, [location.pathname, cards]);
+}
+
+/**
+ * 单个 Lane 子组件（含 droppable 容器接收卡片）
+ */
+function Lane({ lane, index, cardsInLane, disableCardsDrag, ...handlers }) {
+  const { t } = useTranslation();
+  const { setNodeRef, isOver } = useDroppable({
+    id: `lane-content-${lane}`,
+    data: { type: "lane-content", laneName: lane },
+  });
+
+  return (
+    <SortableLane lane={lane} index={index} disableDrag={disableCardsDrag}>
+      <div
+        className="lane flex flex-col w-72 min-w-[18rem] bg-bg-2 rounded-lg border border-bg-3"
+        id={`lane-${lane}`}
+        tabIndex={0}
+        onFocus={() => handlers.onLaneFocus(index)}
+      >
+        <header className="lane__header p-3 border-b border-bg-3 flex items-center gap-2">
+          {handlers.laneBeingRenamed === lane ? (
+            <NameInput
+              value={handlers.newLaneName}
+              errorMsg={handlers.getLaneErrorMsg(lane)}
+              onChange={handlers.setNewLaneName}
+              onConfirm={handlers.onRenameLaneConfirm}
+              onCancel={handlers.onRenameLaneCancel}
+              className="flex-1"
+            />
+          ) : (
+            <LaneName
+              name={lane}
+              count={cardsInLane.length}
+              t={t}
+              onRenameBtnClick={() => handlers.onRenameLane(lane)}
+              onCreateNewCardBtnClick={() => handlers.onCreateNewCard(lane)}
+              onDelete={() => handlers.onDeleteLane(lane)}
+              onDeleteCards={() => handlers.onDeleteCardsByLane(lane)}
+            />
+          )}
+        </header>
+        <SortableContext
+          items={cardsInLane.map((c) => c.id)}
+          strategy={verticalListSortingStrategy}
+        >
+          <div
+            ref={setNodeRef}
+            className={`lane__content flex-1 overflow-y-auto p-2 space-y-2 min-h-[120px] ${
+              isOver ? "dragging-over" : ""
+            }`}
+          >
+            {cardsInLane.length === 0 ? (
+              <div className="text-xs text-fg/30 text-center py-8">-</div>
+            ) : (
+              cardsInLane.map((card, cardIdx) => (
+                <SortableCard
+                  key={card.id}
+                  card={card}
+                  laneName={lane}
+                  index={cardIdx}
+                  disableDrag={disableCardsDrag}
+                >
+                  {({ dragHandleProps, isDragging }) => (
+                    <Card
+                      name={card.name}
+                      tags={card.tags}
+                      dueDate={card.dueDate}
+                      content={card.content}
+                      selectionMode={handlers.selectionMode}
+                      isSelected={handlers.selectedCards.has(
+                        `${card.lane}/${card.name}`
+                      )}
+                      isAdmin={handlers.isAdmin}
+                      t={t}
+                      locale={handlers.locale}
+                      onClick={() => handlers.onCardClick(card)}
+                      onComplete={() => handlers.onCardComplete(card)}
+                      onSelectionChange={(sel) =>
+                        handlers.onToggleCardSelection(
+                          `${card.lane}/${card.name}`,
+                          sel
+                        )
+                      }
+                      onFocus={() => handlers.onCardFocus(card.name)}
+                      isDragging={isDragging}
+                      dragHandleProps={dragHandleProps}
+                      headerSlot={
+                        handlers.cardBeingRenamed?.id === card.id ? (
+                          <NameInput
+                            value={handlers.newCardName}
+                            errorMsg={handlers.getCardNameErrorMsg(card)}
+                            onChange={handlers.setNewCardName}
+                            onConfirm={() => handlers.onRenameCardConfirm(card)}
+                            onCancel={handlers.onRenameCardCancel}
+                          />
+                        ) : (
+                          <CardName
+                            name={card.name}
+                            hasContent={!!card.content}
+                            t={t}
+                            onRenameBtnClick={() => handlers.onRenameCard(card)}
+                            onDelete={() => handlers.onDeleteCard(card)}
+                            onClick={() => handlers.onCardClick(card)}
+                          />
+                        )
+                      }
+                    />
+                  )}
+                </SortableCard>
+              ))
+            )}
+          </div>
+        </SortableContext>
+      </div>
+    </SortableLane>
+  );
+}
 
 function App() {
-  const [lanes, setLanes] = createSignal([]);
-  const [cards, setCards] = createSignal([]);
-  const [sort, setSort] = makePersisted(createSignal("none"), {
-    storage: localStorage,
-    name: "sort",
-  });
-  const [sortDirection, setSortDirection] = makePersisted(createSignal("asc"), {
-    storage: localStorage,
-    name: "sortDirection",
-  });
-  const [search, setSearch] = createSignal("");
-  const [filteredTag, setFilteredTag] = makePersisted(createSignal(null), {
-    storage: localStorage,
-    name: "filteredTag",
-  });
-  const [tagsOptions, setTagsOptions] = createSignal([]);
-  const [laneBeingRenamedName, setLaneBeingRenamedName] = createSignal(null);
-  const [newLaneName, setNewLaneName] = createSignal(null);
-  const [cardBeingRenamed, setCardBeingRenamed] = createSignal(null);
-  const [newCardName, setNewCardName] = createSignal(null);
-  const [viewMode, setViewMode] = makePersisted(createSignal("tight"), {
-    storage: localStorage,
-    name: "viewMode_v2",
-  });
-  const [renderUID, setRenderUID] = createSignal(v7());
-  const [selectionMode, setSelectionMode] = createSignal(false);
-  const [selectedCards, setSelectedCards] = createSignal(new Set());
-  const [focusedCardId, setFocusedCardId] = createSignal(null);
-  const [focusedLaneIndex, setFocusedLaneIndex] = createSignal(null);
-  const [hasAutoFocusedFirstCard, setHasAutoFocusedFirstCard] = createSignal(false);
-  const [showHelpDialog, setShowHelpDialog] = createSignal(false);
-  const [isAdminUser, setIsAdminUser] = createSignal(false);
-  const [showLoginDialog, setShowLoginDialog] = createSignal(false);
-  const [loginEmail, setLoginEmail] = createSignal("");
-  const [loginPassword, setLoginPassword] = createSignal("");
-  const [loginError, setLoginError] = createSignal("");
-  const { t, locale, setLocale } = useI18n();
+  const { t, i18n } = useTranslation();
   const location = useLocation();
   const navigate = useNavigate();
-  let mainContainerRef;
+  const mainContainerRef = useRef(null);
 
-  const basePath = createMemo(() => {
-    if ((import.meta.env.BASE_URL || "").endsWith("/")) {
-      return import.meta.env.BASE_URL.substring(
-        0,
-        import.meta.env.BASE_URL.length - 1
+  // board store
+  const {
+    lanes,
+    cards,
+    tagsOptions,
+    fetchData,
+    createNewCard,
+    deleteCard,
+    renameCard,
+    moveCardToLane,
+    moveCardInLane,
+    createNewLane,
+    renameLane,
+    deleteLane,
+    deleteCardsByLane,
+    bulkDeleteCards,
+    bulkAddTags,
+    bulkRemoveTags,
+    bulkSetDueDate,
+    handleLanesSortChange,
+    handleCardsSortChange,
+    validateName,
+  } = useBoardStore();
+
+  // auth store
+  const {
+    isAdmin,
+    showLoginDialog,
+    logout,
+    setShowLoginDialog,
+    initAuth,
+  } = useAuthStore();
+
+  // ui store
+  const {
+    search,
+    sort,
+    sortDirection,
+    filteredTag,
+    viewMode,
+    theme,
+    selectionMode,
+    selectedCards,
+    focusedCardId,
+    focusedLaneIndex,
+    showHelpDialog,
+    setSearch,
+    setSortFromSelect,
+    setFilteredTag,
+    setViewMode,
+    setSelectionMode,
+    toggleCardSelection,
+    clearSelection,
+    setFocusedCardId,
+    setFocusedLaneIndex,
+    clearFocus,
+    setShowHelpDialog,
+  } = useUiStore();
+
+  const selectedCard = useSelectedCard();
+
+  // 内联重命名状态（不入全局 store）
+  const [laneBeingRenamed, setLaneBeingRenamed] = useState(null);
+  const [newLaneName, setNewLaneName] = useState("");
+  const [cardBeingRenamed, setCardBeingRenamed] = useState(null);
+  const [newCardName, setNewCardName] = useState("");
+  const [activeDrag, setActiveDrag] = useState(null);
+
+  // ===== 初始化 =====
+  useEffect(() => {
+    initAuth();
+    fetchData();
+    const url = window.location.href;
+    if (!url.match(/\/$/)) {
+      window.history.replaceState(null, "", `${url}/`);
+    }
+  }, [initAuth, fetchData]);
+
+  // 应用主题
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
+
+  // 应用视图模式
+  useEffect(() => {
+    document.body.className = document.body.className.replace(/view-mode-\w+/g, "");
+    document.body.classList.add(`view-mode-${viewMode}`);
+  }, [viewMode]);
+
+  // 退出选择模式时清空已选
+  useEffect(() => {
+    if (!selectionMode) clearSelection();
+  }, [selectionMode, clearSelection]);
+
+  useEffect(() => {
+    document.title = "工作任务清单";
+  }, []);
+
+  // ===== 派生：排序 + 筛选 =====
+  const sortedCards = useMemo(() => {
+    if (sort === "none") return cards;
+    const sorted = [...cards];
+    const dir = sortDirection === "asc" ? 1 : -1;
+    switch (sort) {
+      case "name":
+        sorted.sort((a, b) => a.name.localeCompare(b.name) * dir);
+        break;
+      case "tags":
+        sorted.sort((a, b) =>
+          (a.tags?.[0]?.name || "").localeCompare(b.tags?.[0]?.name || "") * dir
+        );
+        break;
+      case "due":
+        sorted.sort((a, b) => (a.dueDate || "z").localeCompare(b.dueDate || "z") * dir);
+        break;
+      case "lastUpdated":
+        sorted.sort((a, b) => (b.lastUpdated || "").localeCompare(a.lastUpdated || ""));
+        break;
+      case "createdFirst":
+        sorted.sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
+        break;
+      default:
+        break;
+    }
+    return sorted;
+  }, [cards, sort, sortDirection]);
+
+  const filteredCards = useMemo(() => {
+    return sortedCards
+      .filter(
+        (card) =>
+          card.name.toLowerCase().includes(search.toLowerCase()) ||
+          (card.content || "").toLowerCase().includes(search.toLowerCase())
+      )
+      .filter(
+        (card) =>
+          !filteredTag ||
+          card.tags?.some(
+            (tag) => tag.name.toLowerCase() === filteredTag.toLowerCase()
+          )
       );
-    }
-    return import.meta.env.BASE_URL || "";
+  }, [sortedCards, search, filteredTag]);
+
+  const getCardsFromLaneFiltered = (lane) =>
+    filteredCards.filter((c) => c.lane === lane);
+
+  // ===== DnD 传感器 =====
+  const touchSensor = useSensor(TouchSensor, {
+    activationConstraint: { delay: 500, tolerance: 5 },
   });
-
-  const board = createMemo(() => {
-    let { pathname } = location || "";
-    if (pathname.endsWith(".md") || pathname.endsWith(".md/")) {
-      const pathnameParts = pathname.split("/").filter((item) => !!item);
-      pathnameParts.pop();
-      const concatenatedName = pathnameParts
-        .join("/")
-        .substring(basePath().length, pathname.length);
-      if (!concatenatedName) {
-        return "";
-      }
-      return "/" + concatenatedName;
-    }
-    if (pathname.endsWith("/")) {
-      pathname = pathname.substring(0, pathname.length - 1);
-    }
-    if (basePath() !== "/") {
-      pathname = pathname.substring(basePath().length, pathname.length);
-    }
-    return pathname;
+  const pointerSensor = useSensor(PointerSensor, {
+    activationConstraint: { distance: 6 },
   });
+  const keyboardSensor = useSensor(KeyboardSensor);
+  const sensors = useSensors(touchSensor, pointerSensor, keyboardSensor);
 
-  const selectedCardName = createMemo(() => {
-    let pathname = location.pathname;
-    if (location.pathname.endsWith("/")) {
-      pathname = pathname.substring(0, pathname.length - 1);
-    }
-    const cardName = pathname.endsWith(".md") ? pathname.split("/").at(-1) : "";
-    return cardName;
-  });
+  const handleDragStart = (event) => setActiveDrag(event.active);
+  const handleDragCancel = () => setActiveDrag(null);
 
-  const selectedCard = createMemo(() => {
-    const decodedCardName = decodeURIComponent(selectedCardName())
-    const card = cards().find(
-      (card) => `${card.name}.md` === decodedCardName
-    );
-    return card;
-  });
+  const handleDragEnd = (event) => {
+    const { active, over } = event;
+    setActiveDrag(null);
+    if (!over) return;
 
-  function fetchTitle() {
-    if (!board()) {
-      return Promise.resolve("工作任务清单");
-    }
-    const boardSplit = board().split("/");
-    return decodeURIComponent(boardSplit.at(-1));
-  }
-
-  const [title] = createResource(fetchTitle);
-
-  function getTagBackgroundCssColor(tagColor) {
-    const backgroundColorNumber = RegExp("[0-9]").exec(`${tagColor || "1"}`)[0];
-    const backgroundColor = `var(--color-alt-${backgroundColorNumber})`;
-    return backgroundColor;
-  }
-
-  async function fetchData() {
-    try {
-      const [lanesData, cardsData, tagsData] = await Promise.all([
-        fetchLanes(), fetchCards(), fetchTags(),
-      ]);
-      const admin = await isAdmin();
-      setIsAdminUser(admin);
-      const newLanes = lanesData.map((l) => l.name);
-      const tagColorMap = {};
-      tagsData.forEach((t) => { tagColorMap[t.name] = t.color; });
-      let newCards = cardsData.map((c) => {
-        const cardTagNames = parseTagsFromContent(c.content);
-        const tagsWithColors = cardTagNames.map((tagName) => ({
-          name: tagName, backgroundColor: tagColorMap[tagName] || "#6b7280",
-        }));
-        return {
-          id: c.id, name: c.name, content: c.content || "",
-          lane: c.lane_name, laneId: c.lane_id,
-          tags: tagsWithColors,
-          dueDate: parseDueDateFromContent(c.content),
-          lastUpdated: c.updated_at, createdAt: c.created_at,
-          lastMovedAt: c.last_moved_at, isSubmitted: c.is_submitted || false,
-        };
+    if (active.data.current?.type === "lane") {
+      if (over.data.current?.type !== "lane") return;
+      if (active.id === over.id) return;
+      handleLanesSortChange({
+        oldIndex: active.data.current.index,
+        newIndex: over.data.current.index,
       });
-      setLanes(newLanes.length ? newLanes : []);
-      setCards(newCards);
-      setTagsOptions(tagsData.map((t) => ({ name: t.name, backgroundColor: t.color })));
-    } catch (err) { console.error("Failed to fetch data:", err); }
-  }
-
-  function pickTagColorIndexBasedOnHash(value) {
-    let hash = 0;
-    for (let i = 0; i < value.length; i++) {
-      hash = value.charCodeAt(i) + ((hash << 5) - hash);
+      return;
     }
-    const tagOptionsLength = 7;
-    const colorIndex = Math.abs(hash % tagOptionsLength);
-    return colorIndex;
-  }
 
-  const debounceChangeCardContent = debounce(
-    (newContent) => changeCardContent(newContent),
-    250
-  );
-
-  async function updateTagColors(newTagColors) {
-    const entries = Object.entries(newTagColors);
-    for (const [tagName, color] of entries) {
-      await supabase.from("tags").update({ color }).eq("name", tagName);
-    }
-    await fetchData();
-  }
-
-  async function changeCardContent(newContent) {
-    const cardBeingUpdated = selectedCard();
-    if (!cardBeingUpdated) return;
-    await supaUpdateContent(cardBeingUpdated.id, newContent);
-    const newCards = cards().map((c) => {
-      if (c.id === cardBeingUpdated.id) {
-        const updated = structuredClone(c);
-        updated.content = newContent;
-        updated.tags = parseTagsFromContent(newContent).map((tagName) => ({
-          name: tagName,
-          backgroundColor: tagsOptions().find((t) => t.name === tagName)?.backgroundColor || "#6b7280",
-        }));
-        updated.dueDate = parseDueDateFromContent(newContent);
-        updated.lastUpdated = new Date().toISOString();
-        return updated;
+    if (active.data.current?.type === "card") {
+      const fromLane = active.data.current.fromLane;
+      const cardId = active.id;
+      let toLane = over.data.current?.laneName;
+      let newIndex = over.data.current?.index;
+      if (over.data.current?.type === "lane-content") {
+        toLane = over.data.current.laneName;
+        newIndex = getCardsFromLaneFiltered(toLane).length;
       }
-      return c;
-    });
-    setCards(newCards);
-  }
-
-  // Use shared utility function for getting tags
-  const getTagsByCardContent = getTagsFromContent;
-
-  function handleSortSelectOnChange(e) {
-    const [newSort, newDirection] = e.target.value === "none" ? ["none", "asc"] : e.target.value.split(":");
-    setSort(newSort);
-    setSortDirection(newDirection);
-  }
-
-  function handleFilterSelectOnChange(e) {
-    const value = e.target.value;
-    if (value === "none") {
-      return setFilteredTag(null);
+      if (!toLane) return;
+      handleCardsSortChange({
+        cardId,
+        fromLane,
+        toLane,
+        oldIndex: active.data.current.index,
+        newIndex,
+      });
     }
-    setFilteredTag(value);
-  }
+  };
 
-  async function createNewCard(lane) {
-    const newCardName = v7();
-    // Fetch lanes to get the correct lane ID
-    const lanesData = await fetchLanes();
-    const laneObj = lanesData.find((l) => l.name === lane);
-    if (!laneObj) { console.error("Lane not found:", lane); return; }
-    await createCard(laneObj.id, newCardName, "");
-    await fetchData();
-    let cardUrl = basePath();
-    if (board()) { cardUrl += board(); }
-    cardUrl += "/" + encodeURIComponent(newCardName) + ".md";
-    navigate(cardUrl);
-  }
+  // ===== 卡片操作 =====
+  const navigateToCard = (card) => {
+    navigate(`/${encodeURIComponent(card.name)}.md`);
+  };
 
-  function deleteCard(card) {
-    supaDeleteCard(card.id);
-    const newCards = cards().filter((c) => c.id !== card.id);
-    setCards(newCards);
-  }
+  const handleCardClick = (card) => {
+    if (selectionMode) return;
+    navigateToCard(card);
+  };
 
-  function moveCardToLane(card, newLane) {
-    if (card.lane === newLane) return;
-    // Update local state FIRST
-    const newCards = structuredClone(cards());
-    const cardIdx = newCards.findIndex((c) => c.id === card.id);
-    if (cardIdx >= 0) {
-      newCards[cardIdx].lane = newLane;
-      newCards[cardIdx].lastMovedAt = new Date().toISOString();
-    }
-    setCards(newCards);
-    setTimeout(() => { document.getElementById("card-" + card.name)?.focus(); }, 50);
-    // Then save to Supabase in background
-    fetchLanes().then((lanesData) => {
-      const targetLane = lanesData.find((l) => l.name === newLane);
-      if (targetLane) {
-        supaMoveCard(card.id, targetLane.id);
-      }
-    });
-  }
+  const handleCardComplete = (card) => {
+    if (!isAdmin) return;
+    navigateToCard(card);
+  };
 
-  function moveCardInLane(card, direction) {
-    const laneCards = cards().filter((c) => c.lane === card.lane);
-    const currentIndex = laneCards.findIndex((c) => c.name === card.name);
-    if (currentIndex === -1) return;
-    const newIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
-    if (newIndex < 0 || newIndex >= laneCards.length) return;
-    handleCardsSortChange({
-      id: "card-" + card.name,
-      from: "lane-content-" + card.lane,
-      to: "lane-content-" + card.lane,
-      index: newIndex,
-    });
-  }
+  const handleDeleteCard = (card) => deleteCard(card.id);
+  const handleDeleteLane = (lane) => deleteLane(lane);
+  const handleDeleteCardsByLane = (lane) => deleteCardsByLane(lane);
 
-  async function createNewLane() {
-    const newName = props.t()('common.lane') + " " + (lanes().length + 1);
-    await supaCreateLane(newName);
-    await fetchData();
-    setNewLaneName(newName);
-    setLaneBeingRenamedName(newName);
-  }
-
-  async function renameLane() {
-    const newLaneNameWithoutSpaces = newLaneName().replaceAll(" ", "-");
-    const laneCards = cards().filter((c) => c.lane === laneBeingRenamedName());
-    const laneId = laneCards[0]?.laneId;
-    if (laneId) { await supaRenameLane(laneId, newLaneNameWithoutSpaces); }
-    await fetchData();
-    setLaneBeingRenamedName(null);
-    setNewLaneName(null);
-  }
-
-  function deleteLane(lane) {
-    const laneCards = cards().filter((c) => c.lane === lane);
-    const laneId = laneCards[0]?.laneId;
-    if (laneId) { supaDeleteLane(laneId); }
-    const newLanes = lanes().filter((l) => l !== lane);
-    const newCards = cards().filter((c) => c.lane !== lane);
-    setLanes(newLanes);
-    setCards(newCards);
-  }
-
-  function sortCardsByName() {
-    const newCards = structuredClone(cards());
-    return newCards.sort((a, b) =>
-      sortDirection() === "asc"
-        ? a.name?.localeCompare(b.name)
-        : b.name?.localeCompare(a.name)
-    );
-  }
-
-  function sortCardsByTags() {
-    const newCards = structuredClone(cards());
-    return newCards.sort((a, b) => {
-      const tagNameA = a.tags?.[0]?.name || '';
-      const tagNameB = b.tags?.[0]?.name || '';
-      return sortDirection() === "asc"
-        ? tagNameA.localeCompare(tagNameB)
-        : tagNameB.localeCompare(tagNameA);
-    });
-  }
-
-  function sortCardsByDue() {
-    const newCards = structuredClone(cards());
-    return newCards.sort((a, b) => {
-      return sortDirection() === "asc"
-        ? (a.dueDate || "z").localeCompare(b.dueDate || "z")
-        : (b.dueDate || "").localeCompare(a.dueDate || "");
-    });
-  }
-
-  function sortCardsByLastUpdated() {
-    const newCards = structuredClone(cards());
-    return newCards.sort((a, b) => {
-      return (b.lastUpdated || "").localeCompare(a.lastUpdated || "");
-    });
-  }
-
-  function sortCardsByCreatedFirst() {
-    const newCards = structuredClone(cards());
-    return newCards.sort((a, b) => {
-      return (a.createdAt || "").localeCompare(b.createdAt || "");
-    });
-  }
-
-  function handleOnSelectedCardNameChange(newName) {
-    renameCard(selectedCard().name, newName);
-  }
-
-  function handleDeleteCardsByLane(lane) {
-    const laneCards = cards().filter((c) => c.lane === lane);
-    laneCards.forEach((card) => supaDeleteCard(card.id));
-    const newCards = cards().filter((c) => c.lane !== lane);
-    setCards(newCards);
-  }
-
-  // Bulk operations functions
-  function toggleCardSelection(cardKey, isSelected) {
-    const newSelected = new Set(selectedCards());
-    if (isSelected) {
-      newSelected.add(cardKey);
-    } else {
-      newSelected.delete(cardKey);
-    }
-    setSelectedCards(newSelected);
-  }
-
-  function clearSelection() {
-    setSelectedCards(new Set());
-  }
-
-  function getCardKey(card) {
-    return `${card.lane}/${card.name}`;
-  }
-
-  // Get tags that exist on selected cards (for remove tags dropdown)
-  const tagsOnSelectedCards = createMemo(() => {
-    const selectedCardsList = cards().filter((card) =>
-      selectedCards().has(getCardKey(card))
-    );
-
-    const allTagsOnSelected = new Set();
-    selectedCardsList.forEach((card) => {
-      const cardTags = getTagsFromContent(card.content || "");
-      cardTags.forEach((tag) => allTagsOnSelected.add(tag));
-    });
-
-    return Array.from(allTagsOnSelected);
-  });
-
-  async function bulkDeleteCards() {
-    const cardsToDelete = cards().filter((card) => selectedCards().has(getCardKey(card)));
-    await Promise.all(cardsToDelete.map((card) => supaDeleteCard(card.id)));
-    const newCards = cards().filter((card) => !selectedCards().has(getCardKey(card)));
-    setCards(newCards);
-    setSelectedCards(new Set());
-  }
-
-  async function bulkAddTags(tagName) {
-    const cardsToUpdate = cards().filter((card) => selectedCards().has(getCardKey(card)));
-    await Promise.all(cardsToUpdate.map((card) => {
-      const newContent = addTagToContent(card.content, tagName);
-      return supaUpdateContent(card.id, newContent);
-    }));
-    await fetchData();
-  }
-
-  async function bulkRemoveTags(tagName) {
-    const cardsToUpdate = cards().filter((card) => selectedCards().has(getCardKey(card)));
-    await Promise.all(cardsToUpdate.map((card) => {
-      const newContent = removeTagFromContent(card.content, tagName);
-      return supaUpdateContent(card.id, newContent);
-    }));
-    await fetchData();
-  }
-
-  async function bulkSetDueDate(dueDate) {
-    const cardsToUpdate = cards().filter((card) => selectedCards().has(getCardKey(card)));
-    await Promise.all(cardsToUpdate.map((card) => {
-      const newContent = setDueDateInContent(card.content, dueDate);
-      return supaUpdateContent(card.id, newContent);
-    }));
-    await fetchData();
-  }
-
-  function renameCard(oldName, newName) {
-    const card = cards().find((c) => c.name === oldName);
-    if (!card) return;
-    const newCardNameWithoutSpaces = newName.replaceAll(" ", "-");
-    supaRenameCard(card.id, newCardNameWithoutSpaces);
-    const newCards = structuredClone(cards());
-    const cardIndex = newCards.findIndex((c) => c.name === oldName);
-    newCards[cardIndex].name = newCardNameWithoutSpaces;
-    setCards(newCards);
-    setCardBeingRenamed(null);
-    setNewCardName(null);
-    const newCardUrl = basePath() + board() + "/" + encodeURIComponent(newCardNameWithoutSpaces) + ".md";
-    navigate(newCardUrl);
-  }
-
-  async function updateTagColorFromExpandedCard(tagColor) {
-    await updateTagColors(tagColor);
-  }
-
-  function validateName(newName, namesList) {
-    if (newName === null) {
-      return null;
-    }
-    if (newName === "") {
-      return t()('validation.mustHaveName');
-    }
-    if (newName.startsWith(".")) {
-      return t()('validation.hiddenByDot');
-    }
-    if (namesList.filter((name) => name === (newName || "").trim()).length) {
-      return t()('validation.duplicateName');
-    }
-    if (/[<>:%"/\\|?*]/g.test(newName)) {
-      return t()('validation.forbiddenChars');
-    }
-    if (newName.endsWith(".md")) {
-      return t()('validation.noMdExtension');
-    }
-    if (newName === "_api") {
-      return t()('validation.prohibitedName');
-    }
-    return null;
-  }
-
-  function startRenamingLane(lane) {
-    setNewLaneName(lane);
-    setLaneBeingRenamedName(lane);
-  }
-
-  const sortedCards = createMemo(() => {
-    if (sort() === "none") {
-      return cards();
-    }
-    if (sort() === "name") {
-      return sortCardsByName();
-    }
-    if (sort() === "tags") {
-      return sortCardsByTags();
-    }
-    if (sort() === "due") {
-      return sortCardsByDue();
-    }
-    if (sort() === "lastUpdated") {
-      return sortCardsByLastUpdated();
-    }
-    if (sort() === "createdFirst") {
-      return sortCardsByCreatedFirst();
-    }
-    return cards();
-  });
-
-  const filteredCards = createMemo(() =>
-    sortedCards()
-      .filter(
-        (card) =>
-          card.name.toLowerCase().includes(search().toLowerCase()) ||
-          (card.content || "").toLowerCase().includes(search().toLowerCase())
-      )
-      .filter(
-        (card) =>
-          filteredTag() === null ||
-          card.tags
-            ?.map((tag) => tag.name?.toLowerCase())
-            .includes(filteredTag().toLowerCase())
-      )
-  );
-
-  function getCardsFromLane(lane) {
-    return filteredCards().filter((card) => card.lane === lane);
-  }
-
-  function startRenamingCard(card) {
-    setNewCardName(card.name);
+  const handleRenameCard = (card) => {
     setCardBeingRenamed(card);
-  }
+    setNewCardName(card.name);
+  };
+  const handleRenameCardConfirm = async (card) => {
+    const error = validateName(
+      newCardName,
+      cards.filter((c) => c.name !== card.name).map((c) => c.name),
+      t
+    );
+    if (error) return;
+    const newName = await renameCard(card.name, newCardName);
+    setCardBeingRenamed(null);
+    setNewCardName("");
+    if (newName) navigate(`/${encodeURIComponent(newName)}.md`);
+  };
+  const handleRenameCardCancel = () => {
+    setCardBeingRenamed(null);
+    setNewCardName("");
+  };
 
-  function exportToCSV() {
-    const allCards = cards();
-    if (!allCards.length) { return; }
-    const headers = ["分类(Lane)", "任务名称(Task)", "标签(Tags)", "截止日期(Due Date)", "任务内容(Content)", "创建时间(Created)", "最后更新(Updated)"];
-    const rows = allCards.map((card) => {
+  const handleRenameLane = (lane) => {
+    setLaneBeingRenamed(lane);
+    setNewLaneName(lane);
+  };
+  const handleRenameLaneConfirm = async () => {
+    const error = validateName(
+      newLaneName,
+      lanes.filter((l) => l !== laneBeingRenamed),
+      t
+    );
+    if (error) return;
+    await renameLane(laneBeingRenamed, newLaneName);
+    setLaneBeingRenamed(null);
+    setNewLaneName("");
+  };
+  const handleRenameLaneCancel = () => {
+    setLaneBeingRenamed(null);
+    setNewLaneName("");
+  };
+
+  const getLaneErrorMsg = (currentLane) =>
+    validateName(
+      newLaneName,
+      lanes.filter((l) => l !== currentLane),
+      t
+    );
+
+  const getCardNameErrorMsg = (currentCard) =>
+    validateName(
+      newCardName,
+      cards.filter((c) => c.id !== currentCard.id).map((c) => c.name),
+      t
+    );
+
+  const handleCreateNewCard = async (lane) => {
+    const newCardName = await createNewCard(lane);
+    if (newCardName) navigate(`/${encodeURIComponent(newCardName)}.md`);
+  };
+
+  const handleCreateNewLane = async () => {
+    const newName = await createNewLane();
+    if (newName) {
+      setLaneBeingRenamed(newName);
+      setNewLaneName(newName);
+    }
+  };
+
+  const exportToCSV = () => {
+    if (!cards.length) return;
+    const headers = [
+      "分类(Lane)",
+      "任务名称(Task)",
+      "标签(Tags)",
+      "截止日期(Due Date)",
+      "任务内容(Content)",
+      "创建时间(Created)",
+      "最后更新(Updated)",
+    ];
+    const rows = cards.map((card) => {
       const cleanContent = (card.content || "")
         .replace(/\[tag:.*?\]\s*/g, "")
         .replace(/\[due:.*?\]\s*/g, "")
@@ -538,706 +476,451 @@ function App() {
         .replace(/"/g, '""')
         .trim();
       return [
-        card.lane || "", card.name || "",
-        (card.tags || []).map((t) => t.name).join("; "),
-        card.dueDate || "", cleanContent,
+        card.lane || "",
+        card.name || "",
+        (card.tags || []).map((tag) => tag.name).join("; "),
+        card.dueDate || "",
+        cleanContent,
         card.createdAt ? new Date(card.createdAt).toLocaleString("zh-CN") : "",
         card.lastUpdated ? new Date(card.lastUpdated).toLocaleString("zh-CN") : "",
       ];
     });
-    const csv = "\uFEFF" + [headers, ...rows]
-      .map((row) => row.map((cell) => '"' + String(cell) + '"').join(","))
-      .join("\n");
+    const csv =
+      "\uFEFF" +
+      [headers, ...rows]
+        .map((row) => row.map((cell) => `"${String(cell)}"`).join(","))
+        .join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "tasks_export_" + new Date().toISOString().split("T")[0] + ".csv";
+    link.download = `tasks_export_${new Date().toISOString().split("T")[0]}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-  }
-  async function handleLogin() {
-    try {
-      setLoginError("");
-      await signIn(loginEmail(), loginPassword());
-      setIsAdminUser(true);
-      setShowLoginDialog(false);
-      setLoginEmail("");
-      setLoginPassword("");
-      await fetchData();
-    } catch (err) {
-      setLoginError(err.message || "Login failed");
-    }
-  }
+  };
 
-  async function handleLogout() {
-    await signOut();
-    setIsAdminUser(false);
-    await fetchData();
-  }
+  const handleLoginLogout = () => {
+    if (isAdmin) logout();
+    else setShowLoginDialog(true);
+  };
 
-  onMount(() => {
-    const url = window.location.href;
-    if (!url.match(/\/$/)) {
-      window.location.replace(`${url}/`);
-    }
-    fetchData();
-  });
+  // ===== 批量操作 =====
+  const handleBulkDelete = async () => {
+    await bulkDeleteCards(Array.from(selectedCards));
+    clearSelection();
+  };
+  const handleBulkAddTags = async (tagName) => {
+    await bulkAddTags(Array.from(selectedCards), tagName);
+  };
+  const handleBulkRemoveTags = async (tagName) => {
+    await bulkRemoveTags(Array.from(selectedCards), tagName);
+  };
+  const handleBulkSetDueDate = async (dueDate) => {
+    await bulkSetDueDate(Array.from(selectedCards), dueDate);
+  };
 
-  createEffect(() => {
-    if (title()) {
-      document.title = title();
-    }
-  });
+  // ===== 焦点 =====
+  const handleCardFocus = (name) => setFocusedCardId(name);
+  const handleLaneFocus = (index) => setFocusedLaneIndex(index);
 
-  createEffect(() => {
-    if (!lanes().length) {
-      return;
-    }
-    if (selectedCard()) {
-      return;
-    }
-    const newSortJson = lanes().reduce((prev, curr) => {
-      const laneCardNames = cards()
-        .filter((card) => card.lane === curr)
-        .map((card) => card.name);
-      return {
-        ...prev,
-        [curr]: laneCardNames,
-      };
-    }, {});
-    if (disableCardsDrag()) {
-      return;
-    }
-  });
-
-  function handleLanesSortChange(changedLane) {
-    const laneName = changedLane.id.slice("lane-".length);
-    const newLanes = structuredClone(lanes());
-    const oldIndex = newLanes.indexOf(laneName);
-    newLanes.splice(oldIndex, 1);
-    newLanes.splice(changedLane.index, 0, laneName);
-    setLanes(newLanes);
-    setRenderUID(v7());
-  }
-
-  function handleCardsSortChange(changedCard) {
-    const cardName = changedCard.id.slice("card-".length);
-    const oldIndex = cards().findIndex((card) => card.name === cardName);
-    const card = cards()[oldIndex];
-    const newCardLane = changedCard.to.slice("lane-content-".length);
-    const movedBetweenLanes = card.lane !== newCardLane;
-
-    // Update local state FIRST (synchronous) for instant drag feedback
-    card.lane = newCardLane;
-    if (movedBetweenLanes) {
-      card.lastMovedAt = new Date().toISOString();
-    }
-    const newCards = lanes().flatMap((lane) => {
-      let laneCards = cards().filter((c) => c.lane === lane && c.name !== cardName);
-      if (lane === newCardLane) {
-        laneCards = [...laneCards.slice(0, changedCard.index), card, ...laneCards.slice(changedCard.index)];
+  const hasAutoFocused = useRef(false);
+  useEffect(() => {
+    if (hasAutoFocused.current) return;
+    if (!focusedCardId && !selectedCard && lanes.length > 0) {
+      const firstLane = lanes[0];
+      const firstLaneCards = getCardsFromLaneFiltered(firstLane);
+      if (firstLaneCards.length > 0) {
+        const firstCard = firstLaneCards[0];
+        setTimeout(() => {
+          setFocusedCardId(firstCard.name);
+          document.getElementById(`card-${firstCard.name}`)?.focus();
+          hasAutoFocused.current = true;
+        }, 100);
       }
-      return laneCards;
-    });
-    setCards(newCards);
-    setFocusedCardId(cardName);
-    setTimeout(() => { document.getElementById("card-" + cardName)?.focus(); }, 50);
-
-    // Then save to Supabase in background (async, non-blocking)
-    if (movedBetweenLanes) {
-      fetchLanes().then((lanesData) => {
-        const targetLane = lanesData.find((l) => l.name === newCardLane);
-        if (targetLane) {
-          supaMoveCard(card.id, targetLane.id);
-        }
-      });
     }
-  }
+  }, [lanes, focusedCardId, selectedCard, setFocusedCardId]);
 
-  const disableCardsDrag = createMemo(() => sort() !== "none" || selectionMode());
-
-  createEffect((prev) => {
-    document.body.classList.remove(`view-mode-${prev}`);
-    document.body.classList.add(`view-mode-${viewMode()}`);
-    return viewMode();
-  });
-
-  // Clear selection when exiting selection mode
-  createEffect(() => {
-    if (!selectionMode()) {
-      setSelectedCards(new Set());
+  useEffect(() => {
+    if (focusedCardId) {
+      document.getElementById(`card-${focusedCardId}`)?.focus();
     }
-  });
+    if (focusedLaneIndex !== null) {
+      const laneName = lanes[focusedLaneIndex];
+      if (laneName) document.getElementById(`lane-${laneName}`)?.focus();
+    }
+  }, [focusedCardId, focusedLaneIndex, lanes]);
 
-  // Auto-focus first card once on initial load for keyboard navigation
-  createEffect(() => {
-    if (hasAutoFocusedFirstCard()) {
+  const disableCardsDrag = sort !== "none" || selectionMode;
+
+  // ===== 键盘导航 =====
+  const handleMainBoardKeyDown = (e) => {
+    if (
+      e.target.tagName === "INPUT" ||
+      e.target.tagName === "TEXTAREA" ||
+      e.target.tagName === "SELECT"
+    ) {
       return;
     }
-    // Only auto-focus if no card is currently focused and we have cards
-    if (!focusedCardId() && !selectedCard() && lanes().length > 0) {
+    if (selectedCard) return;
+
+    const visibleCards = filteredCards;
+    const allowedKeysWithoutCards = ["n", "?", "Escape"];
+    if (!visibleCards.length && !allowedKeysWithoutCards.includes(e.key)) return;
+
+    const focusCard = (name) => {
+      setFocusedCardId(name);
+      setTimeout(() => document.getElementById(`card-${name}`)?.focus(), 0);
+    };
+    const focusLane = (idx) => {
+      setFocusedLaneIndex(idx);
       setTimeout(() => {
-        // Find the first card in the first lane
-        const firstLane = lanes()[0];
-        const firstLaneCards = getCardsFromLane(firstLane);
-        if (firstLaneCards.length > 0) {
-          const firstCard = firstLaneCards[0];
-          setFocusedCardId(firstCard.name);
-          document.getElementById(`card-${firstCard.name}`)?.focus();
-          setHasAutoFocusedFirstCard(true);
-        }
-      }, 100);
-    }
-  });
+        const laneName = lanes[idx];
+        if (laneName) document.getElementById(`lane-${laneName}`)?.focus();
+      }, 0);
+    };
 
-  createEffect(() => {
-    let focusedElement;
-    if (focusedCardId()) {
-      focusedElement = document.getElementById(`card-${focusedCardId()}`)?.focus();
-    }
-    if (focusedLaneIndex()) {
-      const laneName = lanes()[focusedLaneIndex()];
-      focusedElement = document.getElementById(`lane-${laneName}`)?.focus();
-    }
-    if (focusedElement) {
-      focusedElement.scrollIntoView()
-    }
-  })
-
-  function handleMainBoardKeyDown(e) {
-    // Don't interfere with input fields
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') {
-      return;
-    }
-
-    // Don't interfere when a card is expanded
-    if (selectedCard()) {
-      return;
-    }
-
-    const visibleCards = filteredCards();
-
-    // Allow certain keys to work even when there are no cards
-    const allowedKeysWithoutCards = ['n', '?', 'Escape'];
-    if (!visibleCards.length && !allowedKeysWithoutCards.includes(e.key)) {
-      return;
-    }
-
-    switch(e.key) {
-      case 'ArrowDown':
-      case 'j': // vim-style navigation
+    switch (e.key) {
+      case "ArrowDown":
+      case "j": {
         e.preventDefault();
-        if (focusedCardId()) {
-          // Find the actual focused card and get cards in the same lane
-          const currentCard = cards().find(c => c.name === focusedCardId());
+        if (focusedCardId) {
+          const currentCard = cards.find((c) => c.name === focusedCardId);
           if (currentCard) {
-            // Alt+Down: Move card down in the lane
-            if (e.altKey) {
-              moveCardInLane(currentCard, 'down');
-            } else {
-              // Normal Down: Navigate to next card in lane
-              const currentLaneCards = getCardsFromLane(currentCard.lane);
-              const currentIndexInLane = currentLaneCards.findIndex(c => c.name === focusedCardId());
-              if (currentIndexInLane < currentLaneCards.length - 1) {
-                const nextCard = currentLaneCards[currentIndexInLane + 1];
-                setFocusedCardId(nextCard.name);
-                document.getElementById(`card-${nextCard.name}`)?.focus();
-              }
+            if (e.altKey) moveCardInLane(currentCard, "down");
+            else {
+              const laneCards = getCardsFromLaneFiltered(currentCard.lane);
+              const idx = laneCards.findIndex((c) => c.name === focusedCardId);
+              if (idx < laneCards.length - 1) focusCard(laneCards[idx + 1].name);
             }
           }
-        } else if (focusedLaneIndex() !== null) {
-          // From a focused lane, move Down to the first card in that lane
-          const laneName = lanes()[focusedLaneIndex()];
-          const laneCards = getCardsFromLane(laneName);
+        } else if (focusedLaneIndex !== null) {
+          const laneName = lanes[focusedLaneIndex];
+          const laneCards = getCardsFromLaneFiltered(laneName);
           if (laneCards.length > 0) {
-            const firstCard = laneCards[0];
-            setFocusedCardId(firstCard.name);
+            setFocusedCardId(laneCards[0].name);
             setFocusedLaneIndex(null);
-            document.getElementById(`card-${firstCard.name}`)?.focus();
+            focusCard(laneCards[0].name);
           }
         } else if (visibleCards.length > 0) {
-          // If nothing focused, focus first card
-          const firstCard = visibleCards[0];
-          setFocusedCardId(firstCard.name);
-          document.getElementById(`card-${firstCard.name}`)?.focus();
+          focusCard(visibleCards[0].name);
         }
         break;
-
-      case 'ArrowUp':
-      case 'k': // vim-style navigation
+      }
+      case "ArrowUp":
+      case "k": {
         e.preventDefault();
-        if (focusedCardId()) {
-          // Find the actual focused card and get cards in the same lane
-          const currentCard = cards().find(c => c.name === focusedCardId());
+        if (focusedCardId) {
+          const currentCard = cards.find((c) => c.name === focusedCardId);
           if (currentCard) {
-            // Alt+Up: Move card up in the lane
-            if (e.altKey) {
-              moveCardInLane(currentCard, 'up');
-            } else {
-              // Normal Up: Navigate to previous card in lane
-              const currentLaneCards = getCardsFromLane(currentCard.lane);
-              const currentIndexInLane = currentLaneCards.findIndex(c => c.name === focusedCardId());
-              if (currentIndexInLane > 0) {
-                const prevCard = currentLaneCards[currentIndexInLane - 1];
-                setFocusedCardId(prevCard.name);
-                document.getElementById(`card-${prevCard.name}`)?.focus();
-              } else if (currentIndexInLane === 0) {
-                // From the first card in a lane, move focus to the lane itself
-                const laneIndex = lanes().indexOf(currentCard.lane);
-                if (laneIndex !== -1) {
+            if (e.altKey) moveCardInLane(currentCard, "up");
+            else {
+              const laneCards = getCardsFromLaneFiltered(currentCard.lane);
+              const idx = laneCards.findIndex((c) => c.name === focusedCardId);
+              if (idx > 0) focusCard(laneCards[idx - 1].name);
+              else if (idx === 0) {
+                const laneIdx = lanes.indexOf(currentCard.lane);
+                if (laneIdx !== -1) {
                   setFocusedCardId(null);
-                  setFocusedLaneIndex(laneIndex);
-                  setTimeout(() => {
-                    document.getElementById(`lane-${currentCard.lane}`)?.focus();
-                  }, 0);
+                  focusLane(laneIdx);
                 }
               }
             }
           }
         } else if (visibleCards.length > 0) {
-          // If nothing focused, focus first card
-          const firstCard = visibleCards[0];
-          setFocusedCardId(firstCard.name);
-          document.getElementById(`card-${firstCard.name}`)?.focus();
+          focusCard(visibleCards[0].name);
         }
         break;
-
-      case 'ArrowRight':
-      case 'l': // vim-style navigation
+      }
+      case "ArrowRight":
+      case "l": {
         e.preventDefault();
-        if (focusedCardId()) {
-          // Find the actual focused card from all cards, not just visible filtered ones
-          const currentCard = cards().find(c => c.name === focusedCardId());
+        if (focusedCardId) {
+          const currentCard = cards.find((c) => c.name === focusedCardId);
           if (currentCard) {
-            const currentLaneIndex = lanes().indexOf(currentCard.lane);
-
-            // Alt+Right: Move card to next lane (if exists)
+            const laneIdx = lanes.indexOf(currentCard.lane);
             if (e.altKey) {
-              if (currentLaneIndex < lanes().length - 1) {
-                const nextLane = lanes()[currentLaneIndex + 1];
-                moveCardToLane(currentCard, nextLane);
-              }
+              if (laneIdx < lanes.length - 1)
+                moveCardToLane(currentCard, lanes[laneIdx + 1]);
             } else {
-              // Normal Right: Navigate to first card in next non-empty lane
-              for (let i = currentLaneIndex + 1; i < lanes().length; i++) {
-                const nextLaneCards = getCardsFromLane(lanes()[i]);
+              for (let i = laneIdx + 1; i < lanes.length; i++) {
+                const nextLaneCards = getCardsFromLaneFiltered(lanes[i]);
                 if (nextLaneCards.length > 0) {
-                  setFocusedCardId(nextLaneCards[0].name);
-                  document.getElementById(`card-${nextLaneCards[0].name}`)?.focus();
+                  focusCard(nextLaneCards[0].name);
                   break;
                 }
               }
             }
           }
-        } else if (focusedLaneIndex() !== null) {
-          const currentLaneIdx = focusedLaneIndex();
+        } else if (focusedLaneIndex !== null) {
           if (e.altKey) {
-            // Alt+Right: move the lane itself one position to the right
-            if (currentLaneIdx < lanes().length - 1) {
-              const laneName = lanes()[currentLaneIdx];
+            if (focusedLaneIndex < lanes.length - 1) {
               handleLanesSortChange({
-                id: `lane-${laneName}`,
-                index: currentLaneIdx + 1,
+                oldIndex: focusedLaneIndex,
+                newIndex: focusedLaneIndex + 1,
               });
             }
-          } else {
-            // Normal Right: move lane focus to the next lane
-            if (currentLaneIdx < lanes().length - 1) {
-              const nextLaneName = lanes()[currentLaneIdx + 1];
-              setFocusedLaneIndex(currentLaneIdx + 1);
-              setFocusedCardId(null);
-              setTimeout(() => {
-                document.getElementById(`lane-${nextLaneName}`)?.focus();
-              }, 0);
-            }
+          } else if (focusedLaneIndex < lanes.length - 1) {
+            focusLane(focusedLaneIndex + 1);
           }
         } else if (visibleCards.length > 0) {
-          // If nothing focused, focus first card
-          const firstCard = visibleCards[0];
-          setFocusedCardId(firstCard.name);
-          document.getElementById(`card-${firstCard.name}`)?.focus();
+          focusCard(visibleCards[0].name);
         }
         break;
-
-      case 'ArrowLeft':
-      case 'h': // vim-style navigation
+      }
+      case "ArrowLeft":
+      case "h": {
         e.preventDefault();
-        if (focusedCardId()) {
-          // Find the actual focused card from all cards, not just visible filtered ones
-          const currentCard = cards().find(c => c.name === focusedCardId());
+        if (focusedCardId) {
+          const currentCard = cards.find((c) => c.name === focusedCardId);
           if (currentCard) {
-            const currentLaneIndex = lanes().indexOf(currentCard.lane);
-
-            // Alt+Left: Move card to previous lane (if exists)
+            const laneIdx = lanes.indexOf(currentCard.lane);
             if (e.altKey) {
-              if (currentLaneIndex > 0) {
-                const prevLane = lanes()[currentLaneIndex - 1];
-                moveCardToLane(currentCard, prevLane);
-              }
+              if (laneIdx > 0) moveCardToLane(currentCard, lanes[laneIdx - 1]);
             } else {
-              // Normal Left: Navigate to first card in previous non-empty lane
-              for (let i = currentLaneIndex - 1; i >= 0; i--) {
-                const prevLaneCards = getCardsFromLane(lanes()[i]);
+              for (let i = laneIdx - 1; i >= 0; i--) {
+                const prevLaneCards = getCardsFromLaneFiltered(lanes[i]);
                 if (prevLaneCards.length > 0) {
-                  setFocusedCardId(prevLaneCards[0].name);
-                  document.getElementById(`card-${prevLaneCards[0].name}`)?.focus();
+                  focusCard(prevLaneCards[0].name);
                   break;
                 }
               }
             }
           }
-        } else if (focusedLaneIndex() !== null) {
-          const currentLaneIdx = focusedLaneIndex();
+        } else if (focusedLaneIndex !== null) {
           if (e.altKey) {
-            // Alt+Left: move the lane itself one position to the left
-            if (currentLaneIdx > 0) {
-              const laneName = lanes()[currentLaneIdx];
+            if (focusedLaneIndex > 0) {
               handleLanesSortChange({
-                id: `lane-${laneName}`,
-                index: currentLaneIdx - 1,
+                oldIndex: focusedLaneIndex,
+                newIndex: focusedLaneIndex - 1,
               });
             }
-          } else {
-            // Normal Left: move lane focus to the previous lane
-            if (currentLaneIdx > 0) {
-              const prevLaneName = lanes()[currentLaneIdx - 1];
-              setFocusedLaneIndex(currentLaneIdx - 1);
-              setFocusedCardId(null);
-              setTimeout(() => {
-                document.getElementById(`lane-${prevLaneName}`)?.focus();
-              }, 0);
-            }
+          } else if (focusedLaneIndex > 0) {
+            focusLane(focusedLaneIndex - 1);
           }
         } else if (visibleCards.length > 0) {
-          // If nothing focused, focus first card
-          const firstCard = visibleCards[0];
-          setFocusedCardId(firstCard.name);
-          document.getElementById(`card-${firstCard.name}`)?.focus();
+          focusCard(visibleCards[0].name);
         }
         break;
-
-      case 'Enter':
-      case 'e': // Edit card
+      }
+      case "Enter":
+      case "e": {
         e.preventDefault();
-        if (focusedCardId()) {
-          const card = cards().find(c => c.name === focusedCardId());
-          if (card) {
-            navigate(`${basePath()}${board()}/${card.name}.md`);
-          }
+        if (focusedCardId) {
+          const card = cards.find((c) => c.name === focusedCardId);
+          if (card) navigateToCard(card);
         }
         break;
-
-      case 'n': // New card
+      }
+      case "n": {
         e.preventDefault();
-        if (lanes().length > 0) {
-          const currentCard = focusedCardId()
-            ? cards().find(c => c.name === focusedCardId())
+        if (lanes.length > 0) {
+          const currentCard = focusedCardId
+            ? cards.find((c) => c.name === focusedCardId)
             : null;
-          const targetLane = currentCard ? currentCard.lane : lanes()[0];
-          createNewCard(targetLane);
+          const targetLane = currentCard ? currentCard.lane : lanes[0];
+          handleCreateNewCard(targetLane);
         }
         break;
-
-      case 'r': // Rename card
+      }
+      case "r": {
         e.preventDefault();
-        if (focusedCardId()) {
-          const card = cards().find(c => c.name === focusedCardId());
-          if (card) {
-            startRenamingCard(card);
+        if (focusedCardId) {
+          const card = cards.find((c) => c.name === focusedCardId);
+          if (card) handleRenameCard(card);
+        }
+        break;
+      }
+      case "d": {
+        e.preventDefault();
+        if (focusedCardId) {
+          const card = cards.find((c) => c.name === focusedCardId);
+          if (card && window.confirm(`Delete card "${card.name}"?`)) {
+            handleDeleteCard(card);
           }
         }
         break;
-
-      case 'd': // Delete card (with confirmation)
+      }
+      case "Escape": {
         e.preventDefault();
-        if (focusedCardId()) {
-          const card = cards().find(c => c.name === focusedCardId());
-          if (card && confirm(`Delete card "${card.name}"?`)) {
-            // Find cards in the same lane for next focus
-            const currentLaneCards = getCardsFromLane(card.lane);
-            const currentIndexInLane = currentLaneCards.findIndex(c => c.name === focusedCardId());
-
-            deleteCard(card);
-
-            // Wait for the DOM to update, then focus next or previous card in the same lane
-            setTimeout(() => {
-              if (currentIndexInLane < currentLaneCards.length - 1) {
-                const nextCard = currentLaneCards[currentIndexInLane + 1];
-                setFocusedCardId(nextCard.name);
-                document.getElementById(`card-${nextCard.name}`)?.focus();
-              } else if (currentIndexInLane > 0) {
-                const prevCard = currentLaneCards[currentIndexInLane - 1];
-                setFocusedCardId(prevCard.name);
-                document.getElementById(`card-${prevCard.name}`)?.focus();
-              } else {
-                setFocusedCardId(null);
-              }
-            }, 50);
-          }
+        if (showHelpDialog) setShowHelpDialog(false);
+        else {
+          clearFocus();
+          mainContainerRef.current?.focus();
         }
         break;
-
-      case 'Escape':
-        e.preventDefault();
-        if (showHelpDialog()) {
-          setShowHelpDialog(false);
-        } else {
-          setFocusedCardId(null);
-          setFocusedLaneIndex(null);
-          mainContainerRef?.focus();
-        }
-        break;
-
-      case '?': // Help
+      }
+      case "?": {
         e.preventDefault();
         setShowHelpDialog(true);
         break;
+      }
+      default:
+        break;
     }
-  }
+  };
+
+  const handleSelectedCardNameChange = async (oldName, newName) => {
+    await renameCard(oldName, newName);
+  };
+
+  // 拖拽预览
+  const renderDragPreview = () => {
+    if (!activeDrag) return null;
+    const data = activeDrag.data.current;
+    if (data?.type === "card") {
+      return (
+        <div className="card opacity-80 max-w-xs">
+          <div className="text-sm font-medium">{data.card.name}</div>
+        </div>
+      );
+    }
+    if (data?.type === "lane") {
+      return <div className="text-sm font-semibold">{data.lane}</div>;
+    }
+    return null;
+  };
+
+  // 收集已选卡片上的所有标签（给 BulkToolbar 用）
+  const tagsOnSelectedCards = useMemo(() => {
+    const set = new Set();
+    selectedCards.forEach((key) => {
+      const [lane, name] = key.split("/");
+      const card = cards.find((c) => c.lane === lane && c.name === name);
+      card?.tags?.forEach((tag) => set.add(tag.name));
+    });
+    return Array.from(set);
+  }, [selectedCards, cards]);
 
   return (
     <div
-      ref={(el) => mainContainerRef = el}
-      tabIndex="-1"
+      ref={mainContainerRef}
+      tabIndex={-1}
       onKeyDown={handleMainBoardKeyDown}
-      style={{ outline: 'none', height: '100%', display: 'flex', 'flex-direction': 'column' }}
+      className="flex flex-col h-screen outline-none"
     >
       <Header
-        search={search()}
+        search={search}
         onSearchChange={setSearch}
-        sort={sort() === "none" ? "none" : `${sort()}:${sortDirection()}`}
-        onSortChange={handleSortSelectOnChange}
-        tagOptions={tagsOptions().map((option) => option.name)}
-        filteredTag={filteredTag()}
-        onTagChange={handleFilterSelectOnChange}
-        onNewLaneBtnClick={createNewLane}
-        viewMode={viewMode()}
+        onSortChange={(e) => setSortFromSelect(e.target.value)}
+        tagOptions={tagsOptions.map((opt) => opt.name)}
+        filteredTag={filteredTag}
+        onTagChange={(e) =>
+          setFilteredTag(e.target.value === "none" ? null : e.target.value)
+        }
+        onNewLaneBtnClick={handleCreateNewLane}
         onViewModeChange={(e) => setViewMode(e.target.value)}
-        selectionMode={selectionMode()}
+        selectionMode={selectionMode}
         onSelectionModeChange={setSelectionMode}
-        t={t}
-        locale={locale()}
-        onLocaleChange={(e) => setLocale(e.target.value)}
-        isAdmin={isAdminUser()}
-        onLoginLogout={() => isAdminUser() ? handleLogout() : setShowLoginDialog(true)}
+        isAdmin={isAdmin}
+        onLoginLogout={handleLoginLogout}
         onExport={exportToCSV}
+        onShowHelp={() => setShowHelpDialog(true)}
       />
-      <Show when={selectionMode()}>
+
+      {selectionMode && (
         <BulkOperationsToolbar
-          selectedCount={selectedCards().size}
-          onDelete={bulkDeleteCards}
-          onAddTags={bulkAddTags}
-          onRemoveTags={bulkRemoveTags}
-          onSetDueDate={bulkSetDueDate}
+          selectedCount={selectedCards.size}
+          tagsOptions={tagsOptions.map((opt) => opt.name)}
+          tagsOnSelectedCards={tagsOnSelectedCards}
+          onDelete={handleBulkDelete}
+          onAddTags={handleBulkAddTags}
+          onRemoveTags={handleBulkRemoveTags}
+          onSetDueDate={handleBulkSetDueDate}
           onClearSelection={clearSelection}
-          tagsOptions={tagsOptions().map((option) => option.name)}
-          tagsOnSelectedCards={tagsOnSelectedCards()}
-          t={t}
         />
-      </Show>
-      {title() ? <h1 class="app-title">{title()}</h1> : <></>}
-      <DragAndDrop.Provider>
-        <DragAndDrop.Container class={`lanes`} onChange={handleLanesSortChange}>
-          <For each={lanes()}>
-            {(lane, index) => (
-              <div
-                class="lane"
-                id={`lane-${lane}`}
-                tabIndex={0}
-                onFocus={() => {
-                  setFocusedLaneIndex(index());
-                  setFocusedCardId(null);
-                }}
-              >
-                <header class="lane__header">
-                  {laneBeingRenamedName() === lane ? (
-                    <NameInput
-                      value={newLaneName()}
-                      errorMsg={validateName(
-                        newLaneName(),
-                        lanes().filter(
-                          (lane) => lane !== laneBeingRenamedName()
-                        )
-                      )}
-                      onChange={(newValue) => setNewLaneName(newValue)}
-                      onConfirm={renameLane}
-                      onCancel={() => {
-                        setNewLaneName(null);
-                        setLaneBeingRenamedName(null);
-                      }}
-                    />
-                  ) : (
-                    <LaneName
-                      name={lane}
-                      count={getCardsFromLane(lane).length}
-                      onRenameBtnClick={() => startRenamingLane(lane)}
-                      onCreateNewCardBtnClick={() => createNewCard(lane)}
-                      onDelete={() => deleteLane(lane)}
-                      onDeleteCards={() => handleDeleteCardsByLane(lane)}
-                      t={t}
-                    />
-                  )}
-                </header>
-                <DragAndDrop.Container
-                  class="lane__content"
-                  group="cards"
-                  id={`lane-content-${lane}`}
-                  onChange={handleCardsSortChange}
-                >
-                  <For each={getCardsFromLane(lane)}>
-                    {(card) => (
-                      <Card
-                        name={card.name}
-                        tags={card.tags}
-                        dueDate={card.dueDate}
-                        content={card.content}
-                        disableDrag={disableCardsDrag()}
-                        t={t}
-                        locale={locale()}
-                        selectionMode={selectionMode()}
-                        isSelected={selectedCards().has(getCardKey(card))}
-                        onComplete={() => moveCardToLane(card, "已完成")}
-                        onSelectionChange={(isSelected) =>
-                          toggleCardSelection(getCardKey(card), isSelected)
-                        }
-                        onFocus={() => {
-                          setFocusedCardId(card.name);
-                          setFocusedLaneIndex(null);
-                        }}
-                        onClick={() => {
-                          if (!selectionMode()) {
-                            let cardUrl = basePath();
-                            if (board()) {
-                              cardUrl += `${board()}`;
-                            }
-                            cardUrl += `/${encodeURIComponent(card.name)}.md`;
-                            navigate(cardUrl);
-                          }
-                        }}
-                        headerSlot={
-                          cardBeingRenamed()?.name === card.name ? (
-                            <NameInput
-                              value={newCardName()}
-                              errorMsg={validateName(
-                                newCardName(),
-                                cards()
-                                  .filter(
-                                    (card) =>
-                                      card.name !== cardBeingRenamed()?.name
-                                  )
-                                  .map((card) => card.name)
-                              )}
-                              onChange={(newValue) => setNewCardName(newValue)}
-                              onConfirm={() =>
-                                renameCard(
-                                  cardBeingRenamed()?.name,
-                                  newCardName()
-                                )
-                              }
-                              onCancel={() => {
-                                const cardName = cardBeingRenamed()?.name;
-                                setNewCardName(null);
-                                setCardBeingRenamed(null);
-                                // Restore focus to the card
-                                setTimeout(() => {
-                                  if (cardName) {
-                                    setFocusedCardId(cardName);
-                                    document.getElementById(`card-${cardName}`)?.focus();
-                                  }
-                                }, 50);
-                              }}
-                            />
-                          ) : (
-                            <CardName
-                              name={card.name}
-                              hasContent={!!card.content}
-                              onRenameBtnClick={() => startRenamingCard(card)}
-                              onDelete={() => deleteCard(card)}
-                              onClick={() =>
-                                navigate(
-                                  `${basePath()}${board()}/${encodeURIComponent(card.name)}.md`
-                                )
-                              }
-                              t={t}
-                            />
-                          )
-                        }
-                      />
-                    )}
-                  </For>
-                </DragAndDrop.Container>
-              </div>
-            )}
-          </For>
-        </DragAndDrop.Container>
-        <DragAndDrop.Target />
-      </DragAndDrop.Provider>
-      <Show when={renderUID()} keyed>
-        <Show when={selectedCard()}>
-          <ExpandedCard
-            name={selectedCard().name}
-            content={selectedCard().content}
-            tags={selectedCard().tags || []}
-            tagsOptions={tagsOptions()}
-            t={t}
-            onClose={() => {
-              const cardName = selectedCard().name;
-              navigate(`${basePath()}${board()}` || "/");
-              // Restore focus to the card after navigation
-              setTimeout(() => {
-                setFocusedCardId(cardName);
-                const cardElement = document.getElementById(`card-${cardName}`);
-                if (cardElement) {
-                  cardElement.focus();
-                  cardElement.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-                }
-              }, 50);
-            }}
-            onContentChange={(value) =>
-              debounceChangeCardContent(value, selectedCard().id)
-            }
-            onTagColorChange={updateTagColorFromExpandedCard}
-            onNameChange={handleOnSelectedCardNameChange}
-            getNameErrorMsg={(newName) =>
-              validateName(
-                newName,
-                cards()
-                  .filter((card) => card.name !== selectedCard().name)
-                  .map((card) => card.name)
-              )
-            }
-            disableImageUpload={false}
-            board={board()}
-            lane={selectedCard()?.lane}
-          />
-        </Show>
-      </Show>
-      <Show when={showHelpDialog()}>
-        <KeyboardNavigationDialog onClose={() => setShowHelpDialog(false)} t={t} />
-      </Show>
-              <Show when={showLoginDialog()}>
-        <div class="dialog-backdrop" onClick={(e) => { if (e.target === e.currentTarget) setShowLoginDialog(false); }}>
-          <dialog open class="login-dialog">
-            <div class="login-dialog__body">
-              <h2>登录管理</h2>
-              <Show when={loginError()}>
-                <p class="login-error">{loginError()}</p>
-              </Show>
-              <input type="email" placeholder="邮箱" value={loginEmail()} onInput={(e) => setLoginEmail(e.target.value)} class="login-input" />
-              <input type="password" placeholder="密码" value={loginPassword()} onInput={(e) => setLoginPassword(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") handleLogin(); }} class="login-input" />
-              <div class="login-dialog__btns">
-                <button type="button" onClick={handleLogin}>登录</button>
-                <button type="button" onClick={() => setShowLoginDialog(false)}>取消</button>
-              </div>
+      )}
+
+      <DndContext
+        sensors={sensors}
+        collisionDetection={pointerWithin}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+        onDragCancel={handleDragCancel}
+      >
+        <div className="lanes flex-1 overflow-x-auto overflow-y-hidden p-4">
+          <SortableContext
+            items={lanes.map((l) => `lane-${l}`)}
+            strategy={horizontalListSortingStrategy}
+          >
+            <div className="flex gap-3 h-full">
+              {lanes.map((lane, index) => (
+                <Lane
+                  key={lane}
+                  lane={lane}
+                  index={index}
+                  cardsInLane={getCardsFromLaneFiltered(lane)}
+                  disableCardsDrag={disableCardsDrag}
+                  selectionMode={selectionMode}
+                  selectedCards={selectedCards}
+                  isAdmin={isAdmin}
+                  locale={i18n.language}
+                  laneBeingRenamed={laneBeingRenamed}
+                  newLaneName={newLaneName}
+                  setNewLaneName={setNewLaneName}
+                  getLaneErrorMsg={getLaneErrorMsg}
+                  onRenameLane={handleRenameLane}
+                  onRenameLaneConfirm={handleRenameLaneConfirm}
+                  onRenameLaneCancel={handleRenameLaneCancel}
+                  onCreateNewCard={handleCreateNewCard}
+                  onDeleteLane={handleDeleteLane}
+                  onDeleteCardsByLane={handleDeleteCardsByLane}
+                  cardBeingRenamed={cardBeingRenamed}
+                  newCardName={newCardName}
+                  setNewCardName={setNewCardName}
+                  getCardNameErrorMsg={getCardNameErrorMsg}
+                  onRenameCard={handleRenameCard}
+                  onRenameCardConfirm={handleRenameCardConfirm}
+                  onRenameCardCancel={handleRenameCardCancel}
+                  onCardClick={handleCardClick}
+                  onCardComplete={handleCardComplete}
+                  onCardFocus={handleCardFocus}
+                  onLaneFocus={handleLaneFocus}
+                  onToggleCardSelection={toggleCardSelection}
+                  onDeleteCard={handleDeleteCard}
+                />
+              ))}
             </div>
-          </dialog>
+          </SortableContext>
         </div>
-      </Show>
-  </div>
+        <DragOverlay>{renderDragPreview()}</DragOverlay>
+      </DndContext>
+
+      {selectedCard && (
+        <ExpandedCard
+          card={selectedCard}
+          tagsOptions={tagsOptions}
+          onClose={() => {
+            navigate("/");
+            setTimeout(() => {
+              const cardEl = document.getElementById(`card-${selectedCard.name}`);
+              if (cardEl) {
+                cardEl.focus();
+                cardEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+              }
+            }, 50);
+          }}
+          onNameChange={handleSelectedCardNameChange}
+          getNameErrorMsg={(newName) =>
+            validateName(
+              newName,
+              cards
+                .filter((c) => c.name !== selectedCard.name)
+                .map((c) => c.name),
+              t
+            )
+          }
+        />
+      )}
+
+      <LoginDialog />
+
+      {showHelpDialog && (
+        <KeyboardHelpDialog onClose={() => setShowHelpDialog(false)} />
+      )}
+    </div>
   );
 }
 
-export default App
+export default App;

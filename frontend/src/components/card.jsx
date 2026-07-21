@@ -1,123 +1,162 @@
-import { createMemo } from "solid-js";
-import { handleKeyDown } from "../utils";
-
 /**
- *
- * @param {Object} props
- * @param {string} props.name
- * @param {boolean} props.disableDrag
- * @param {Object[]} props.tags
- * @param {string} props.dueDate
- * @param {Function} props.onClick
- * @param {JSX.Element} props.headerSlot
- * @param {boolean} props.selectionMode
- * @param {boolean} props.isSelected
- * @param {Function} props.onSelectionChange
- * @param {Function} props.onComplete
- * @param {Function} props.onFocus
- * @param {Function} props.t
- * @param {string} props.locale
+ * 卡片：单击打开，选择模式下点击切换选中，包含「完成」按钮（仅登录可见）
+ * 拖拽由父级 Lane（@dnd-kit/sortable）处理，Card 这里只负责渲染和点击
  */
-export function Card(props) {
+import { useMemo } from "react";
+import { Check } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { cn } from "../lib/cn.js";
 
-  const dueDateStatusClass = createMemo(() => {
-    if (!props.dueDate) {
-      return '';
-    }
-    const [year, month, day] = props.dueDate.split('-')
-    const dueDateLocalTime = new Date(year, month - 1, day);
-    const dueDateLocalTimeISO = dueDateLocalTime.toISOString().split('T')[0];
-    const todayISO = new Date().toISOString().split('T')[0];
-    if (dueDateLocalTimeISO === todayISO) {
-      return 'card__due-date--in-time';
-    }
-    if (dueDateLocalTimeISO < todayISO) {
-      return 'card__due-date--past-time';
-    }
-    return '';
-  });
+function getTodayISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`;
+}
 
-  const dueDateFormatted = createMemo(() => {
-    if (!props.dueDate) {
-      return '';
+export function Card({
+  name,
+  tags = [],
+  dueDate,
+  content,
+  selectionMode,
+  isSelected,
+  isAdmin,
+  onClick,
+  onComplete,
+  onSelectionChange,
+  onFocus,
+  headerSlot,
+  t: tProp,
+  locale,
+  // dnd-kit 透传
+  dragHandleProps,
+  isDragging,
+}) {
+  const { t, i18n } = useTranslation();
+  const tt = tProp || t;
+  const loc = locale || i18n.language;
+
+  const dueDateStatusClass = useMemo(() => {
+    if (!dueDate) return "";
+    const today = getTodayISO();
+    if (dueDate < today) return "text-danger";
+    if (dueDate === today) return "text-warning";
+    return "text-success";
+  }, [dueDate]);
+
+  const dueDateFormatted = useMemo(() => {
+    if (!dueDate) return "";
+    try {
+      const d = new Date(dueDate);
+      return d.toLocaleDateString(loc, { month: "short", day: "numeric" });
+    } catch {
+      return dueDate;
     }
-    const [year, month, day] = props.dueDate.split('-')
-    const dueDateLocalTime = new Date(year, month - 1, day);
-    return props.t()('card.due', { date: dueDateLocalTime.toLocaleDateString(props.locale, { month: 'short', day: 'numeric' }) });
-  })
+  }, [dueDate, loc]);
+
+  const handleClick = (e) => {
+    if (selectionMode) {
+      e.stopPropagation();
+      onSelectionChange?.(!isSelected);
+      return;
+    }
+    // 避免点击工具栏子元素（按钮、checkbox）时误触发卡片打开
+    onClick?.();
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      onClick?.();
+    }
+    // 方向键冒泡到 board 处理
+  };
 
   return (
     <div
       role="button"
-      id={`card-${props.name}`}
-      class={`card ${props.disableDrag ? "card__drag-disabled" : ""} ${props.isSelected ? "card--selected" : ""}`}
-      onKeyDown={(e) => {
-        // Only handle Enter key, let arrow keys bubble up to board-level handler
-        if (e.key === "Enter") {
-          handleKeyDown(e, props.onClick);
-        }
-      }}
-      onFocus={() => props.onFocus?.()}
-      onClick={e => {
-        const isDescendant = e.currentTarget === e.target || e.currentTarget.contains(e.target);
-        if (!isDescendant) {
-          return;
-        }
-        // If in selection mode, toggle selection instead of opening
-        if (props.selectionMode && props.onSelectionChange) {
-          e.stopPropagation();
-          props.onSelectionChange(!props.isSelected);
-        } else {
-          props.onClick();
-        }
-      }}
-      tabIndex="0"
+      tabIndex={0}
+      id={`card-${name}`}
+      data-card-name={name}
+      onClick={handleClick}
+      onKeyDown={handleKeyDown}
+      onFocus={onFocus}
+      className={cn(
+        "card group relative flex flex-col gap-1.5 cursor-pointer",
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent",
+        isSelected && "ring-2 ring-accent",
+        isDragging && "being-dragged"
+      )}
+      {...dragHandleProps}
     >
-      <div class="card__toolbar">
-        {props.headerSlot}
-        {props.onComplete && !props.selectionMode && (
+      <div className="card__toolbar flex items-center gap-1">
+        <div className="flex-1 min-w-0">{headerSlot}</div>
+        {isAdmin && !selectionMode && onComplete && (
           <button
             type="button"
-            class="card__complete-btn"
-            title={props.t()('card.complete')}
             onClick={(e) => {
               e.stopPropagation();
-              props.onComplete();
+              onComplete?.();
             }}
+            className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-success/20 text-success"
+            title={tt("card.complete")}
+            aria-label={tt("card.complete")}
           >
-            {"✓"}
+            <Check size={14} />
           </button>
         )}
-        {props.selectionMode && (
+        {selectionMode && (
           <input
             type="checkbox"
-            class="card__checkbox"
-            checked={props.isSelected}
+            checked={!!isSelected}
             onChange={(e) => {
               e.stopPropagation();
-              props.onSelectionChange?.(e.target.checked);
+              onSelectionChange?.(e.target.checked);
             }}
             onClick={(e) => e.stopPropagation()}
+            className="card__checkbox h-4 w-4 accent-accent"
+            aria-label={`select ${name}`}
           />
         )}
       </div>
-      <ul class="card__tags">
-        <For each={props.tags}>
-          {(tag) => (
+
+      {tags?.length > 0 && (
+        <ul className="card__tags flex flex-wrap gap-1 list-none p-0 m-0">
+          {tags.map((tag, idx) => (
             <li
-              class="tag"
+              key={tag.name + idx}
+              className="tag text-[10px]"
               style={{
-                "background-color": tag.backgroundColor,
-                "border-color": tag.backgroundColor,
+                backgroundColor: tag.backgroundColor || "var(--color-background-4)",
+                color: "#fff",
               }}
             >
-              <h5>{tag.name}</h5>
+              {tag.name}
             </li>
+          ))}
+        </ul>
+      )}
+
+      {content && (
+        <h5 className="card__content text-xs text-fg/70 line-clamp-2 m-0 font-normal">
+          {content
+            .replace(/\[tag:.*?\]\s*/g, "")
+            .replace(/\[due:.*?\]\s*/g, "")
+            .trim() || ""}
+        </h5>
+      )}
+
+      {dueDate && (
+        <h5
+          className={cn(
+            "card__due-date text-xs m-0 font-normal flex items-center gap-1",
+            dueDateStatusClass
           )}
-        </For>
-      </ul>
-      <h5 class="card__content">{props.content}</h5>
-      <h5 class={`card__due-date ${dueDateStatusClass()}`}>{dueDateFormatted()}</h5>
+        >
+          {tt("card.due", { date: dueDateFormatted })}
+        </h5>
+      )}
     </div>
   );
 }
