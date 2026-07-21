@@ -3,6 +3,10 @@ backend/node_modules
 frontend/node_modules
 **/node_modules
 
+# 根目录禁止误装 npm 包（playwright 等只装到 frontend/）
+/package.json
+/package-lock.json
+
 # Build output
 frontend/dist
 frontend/dev-dist
@@ -14,6 +18,9 @@ dist-*
 frontend/.env
 frontend/.env.local
 **/.env.local
+
+# Vite cache
+.vite
 
 # Vercel (已弃用，但保留忽略规则防止误传)
 .vercel
