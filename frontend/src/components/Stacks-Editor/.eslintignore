@@ -1,0 +1,4 @@
+node_modules
+dist
+config/*
+.eslintrc.js

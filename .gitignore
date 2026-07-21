@@ -1,0 +1,36 @@
+# Dependencies
+backend/node_modules
+frontend/node_modules
+**/node_modules
+
+# Build output
+frontend/dist
+frontend/dev-dist
+dist
+dist-*
+*.zip
+
+# Local environment
+frontend/.env
+frontend/.env.local
+**/.env.local
+
+# Vercel (已弃用，但保留忽略规则防止误传)
+.vercel
+
+# Supabase MCP（含 access token，不入库）
+.mcp.json
+
+# Backend local data
+backend/static
+backend/tasks
+backend/config
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea
+.vscode
+
+# ZCode 会话计划文件
+.zcode/

@@ -1,0 +1,4 @@
+{
+    "extends": "../config/tsconfig.eslint.json",
+    "types": ["jest", "./global.d.ts"]
+}
