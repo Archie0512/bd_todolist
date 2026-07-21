@@ -4,7 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 // The anon key is safe to expose in frontend - it's protected by RLS policies
 // Environment variables take priority, but hardcoded values ensure it works everywhere
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "https://nzeujdjxawkbqfzrtblm.supabase.co";
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im56ZXVqZGp4YXdrYnFmenJ0YmxtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM2NjY2OTUsImV4cCI6MjA5OTI0MjY5NX0.N1gfuk_GVorfKKXAiSbKo7OTgHFarLdZU3qHMdVZpTQ";
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "sb_publishable_WdrfS3TYwo3n5krl4DmNYQ_67GFyTbz";
 
 // Credentials are hardcoded as fallback - no warning needed
 
