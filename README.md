@@ -1,108 +1,126 @@
-# ![logo](public/logo.png) Tasks.md
-A self-hosted, Markdown file based task management board.
+# 工作任务清单看板
 
+一个基于 React + Supabase 的简易任务管理看板，用于向领导罗列工作明细、跟踪任务流转。
 
-![Demo](./public/demo.gif)
+> 本项目 fork 自开源项目 [Tasks.md](https://github.com/BaldissaraMatheus/Tasks.md)（MIT），原项目基于 SolidJS + Koa + Markdown 文件存储。本项目改造为 **React + Supabase + Netlify** 架构。
 
-## ⭐ Features
-- Create cards, lanes and tags in a modern and responsive interface;
-- Write cards as Markdown files;
-- Easy to install with a single Docker image;
-- Light and dark themes synced with operating system settings;
-- Heavily customizable with 3 default color themes ([Adwaita](https://gnome.pages.gitlab.gnome.org/libadwaita/doc/main/named-colors.html), [Nord](https://www.nordtheme.com/) and [Catppuccin](https://github.com/catppuccin/catppuccin));
-- Support for subpath based reverse-proxy with an environment variable for base path;
-- Can be installed as PWA.
-- Multilingual support, with locale auto-detected from browser and persisted per user;
+## ✨ 功能特性
 
-## Upgrade from 2.X.X to 3.X.X
-If you're running a docker container with version 2 of Tasks.md and want to upgrade it to version 3, please follow up [those instructions](/migration-guide.md) as it requires some tweeks for it to work properly.
+- 📋 **6 列看板**：即时 / 待分配 / 退回 / 未完成 / 已完成 / 长期
+- 🎯 **富文本编辑**：基于 TipTap 的 WYSIWYG 编辑器，支持 Markdown / RichText 双模式
+- 🏷️ **标签系统**：平铺勾选式（非下拉），7 种主题色
+- 📅 **截止日期**：内嵌 `[due:YYYY-MM-DD]` 标记，过期高亮
+- ✅ **完成/退回 + 备注**：管理员操作时必填备注，记录完整流转历史
+- 🖼️ **图片上传**：Supabase Storage 托管，点击放大预览
+- 🤝 **匿名协作**：同事无需登录即可提交待办，对「待分配」/「退回」列有写权限
+- 🎨 **三套主题**：Adwaita / Catppuccin / Nord，支持浅色/深色/跟随系统
+- ⌨️ **键盘导航**：vim 风格 `h/j/k/l`、方向键、`n/r/d/e/?/Esc`
+- 🌐 **国际化**：中文 / English / Español
+- 📱 **响应式**：触屏支持（长按 500ms 激活拖拽）
+- 🚀 **自动部署**：`git push` 即触发 Netlify 构建
 
-## 🐋 Installation
-### Docker
-Paste this command:
+## 🏗️ 技术栈
+
+| 层 | 技术 |
+|---|---|
+| 前端框架 | React 18 + react-router-dom 6 |
+| 构建 | Vite 5 |
+| 样式 | Tailwind CSS 3 + CSS 变量主题 |
+| 状态管理 | zustand 5（+ persist 中间件） |
+| 富文本 | TipTap 2 |
+| 拖拽 | @dnd-kit/core + @dnd-kit/sortable |
+| 动画 | framer-motion + React Bits 风格组件 |
+| i18n | react-i18next |
+| 后端 | Supabase（PostgreSQL + Auth + Storage） |
+| 部署 | Netlify（Git 自动部署） |
+
+详见 [docs/architecture.md](docs/architecture.md)。
+
+## 🚀 快速开始
+
+### 前置条件
+
+- Node.js 20+（见 `.nvmrc`）
+- npm 10+
+
+### 本地开发
+
+```bash
+# 1. 进入 frontend 目录
+cd frontend
+
+# 2. 复制环境变量模板并填入 Supabase 凭据
+cp .env.example .env
+# 编辑 .env，填入 VITE_SUPABASE_URL 和 VITE_SUPABASE_ANON_KEY
+
+# 3. 安装依赖
+npm install
+
+# 4. 启动 dev 服务器（默认 localhost:3000）
+npm run dev
 ```
-docker run -d \
-  --name tasks.md \
-  -e PUID=1000 \
-  -e PGID=1000 \
-  -e TITLE="" \
-  -e BASE_PATH="" \
-  -e LOCAL_IMAGES_CLEANUP_INTERVAL=1440 \
-  -p 8080:8080 \
-  -v /path/to/tasks/:/tasks/ \
-  -v /path/to/config/:/config/ \
-  --restart unless-stopped \
-  baldissaramatheus/tasks.md
+
+打开浏览器访问 http://localhost:3000
+
+### 生产构建
+
+```bash
+cd frontend
+npm run build:netlify    # 等价于 vite build --base=./（相对路径，用于 Netlify）
 ```
-Remove the environment variables you don't want to keep (all of them are optional, PUID and PGID are recommended), replace `/path/to/something` with directories that exist in your filesystem and then execute it. The environment variables are the following:
-- `PUID` and `PGID`: User ID and group ID that owns the files and directories. On linux distros you can find your user's UID and GID running `id` in the terminal, but it's usually `1000` for both variables. If no value is assigned for those variables, docker will create all the files and directories as root. You can read more about it [here](https://docs.linuxserver.io/general/understanding-puid-and-pgid/).
-- `TITLE`: A given name that shows below the header and in the browser tab when accessing root path;
-- `BASE_PATH`: Base path in the url. Use this variable if you are going to run the app under a subpath based reverse-proxy. Be aware that PWA does not work when BASE_PATH is set with anything other than "/";
-- `LOCAL_IMAGES_CLEANUP_INTERVAL`: After a given interval the app will remove all local images that aren't present in any task. This variable control the duration in minutes of this interval. The default value is 1440 (exactly 24h). Set it as 0 to disable it.
 
+构建产物在 `frontend/dist/`。
 
-### docker-compose
+### 部署到 Netlify
+
+详见 [docs/DEPLOY.md](docs/DEPLOY.md)。简言之：
+1. 把仓库连到 Netlify（Add new site -> Import from Git）
+2. `netlify.toml` 已配置好构建命令
+3. 设置环境变量 `VITE_SUPABASE_URL` 和 `VITE_SUPABASE_ANON_KEY`
+4. `git push` 即自动部署
+
+## 📁 项目结构
+
 ```
-version: "3"
-services:
-  tasks.md:
-    image: baldissaramatheus/tasks.md
-    container_name: tasks.md
-    environment:
-      - PUID=1000
-      - PGID=1000
-    volumes:
-      - /path/to/tasks:/tasks
-      - /path/to/config:/config
-    restart: unless-stopped
-    ports:
-      - 8080:8080
+bd_todolist/
+├── frontend/              # React 前端
+├── backend/               # 本地 Koa 启动器（给非技术同事用）
+├── db/                    # 数据库 schema
+│   ├── supabase-schema.sql              # 全量最新（新环境初始化）
+│   └── supabase-schema-migration-v2.sql # 增量 migration
+├── docs/                  # 文档（DEPLOY/architecture/KEYBOARD_SHORTCUTS）
+├── scripts/               # UI 自检脚本
+├── netlify.toml           # Netlify 构建配置
+└── .mcp.json.example      # Supabase MCP 模板
 ```
-Use the Docker section above as reference for setting up variables and volumes.
 
+完整目录树见 [docs/architecture.md](docs/architecture.md)。
 
-### Source code
-Clone the repository with `git clone --recursive`, open a terminal instance in the `/frontend` directory and another one in the `/backend` directory, then in both of them run `npm install` and `npm start`. The env variables are set in `package.json` file for both directories, and are the same ones listed in the Docker section above, plus `CONFIG_DIR` and `TASKS_DIR` for config and tasks directories paths.
+## 🔐 权限模型
 
-## 🎨 Customize
-You can customize the application CSS through the `custom.css` (within `/config` directory if you're on Docker). You can replace the default `adwaita` theme with `nord` or `catppuccin`, or you can make your own changes. The easieste way to customize the application is to use the existing color variables (detailed [below](#color-variables)), but if you want to make changes other than color replacements you can use [index.css](frontend/src/stylesheets/index.css) file as a reference.
+通过 Supabase RLS（行级安全）在数据库层强制：
 
-### Color variables
-- `color-accent`: Highlight color;
-- `color-foreground`: Anything that goes against background that needs contrast, text color;
-- `color-background-1`: Main background color, used as background color for the app main page;
-- `color-background-2`: 1 layer above main background color, used as background color for editor code-block, dialog, popovers, lanes and header;
-- `color-background-3`: 2 layer above main background color, used as background color for cards;
-- `color-background-4`: 3 layer above main background color, used as background color for buttons and inputs;
-- `color-alt-1`: Used as tag color, input error and past due date;
-- `color-alt-2`: Used as tag color;
-- `color-alt-3`: Used as tag color and due date when it's current date;
-- `color-alt-4`: Used as tag color;
-- `color-alt-5`: Used as tag color;
-- `color-alt-6`: Used as tag color;
-- `color-alt-7`: Used as tag color;
+| 角色 | 查看任务 | 提交待办 | 改待分配/退回列 | 完成/退回 | 上传图片 |
+|---|---|---|---|---|---|
+| 匿名（同事） | ✅ | ✅ | ✅ | ❌ | 仅待分配/退回列 |
+| 管理员 | ✅ | ✅ | ✅ | ✅ | 任意列 |
 
+- 同事无需登录，直接访问 `https://bdtolist.netlify.app` 即可提交待办
+- 管理员点页面顶部「登录」按钮，用邮箱密码登录后可处理所有任务
 
-## 📁 Files structure
-The way directories and files are organized in Tasks.md is quite simple. Every lane you add within the app is a directory in your filesystem and every task is file.
+## 🗃️ 数据库初始化
 
-#### So if your tasks look like this:
-![Screenshot of the app. There are 3 lanes, Backlog, Sprint and Done. Within Done there is one file named "Something something"](/public/directories-organization-1.png)
+新环境部署时，在 Supabase SQL Editor 运行 `db/supabase-schema.sql`（全量最新版，含 6 个默认 lane、card_status_logs 表、card-images bucket、RLS 策略）。
 
-#### Your files should look like this:
-![Screenshot of a file explorer showing 3 folders: Backlog, Sprint and Done](/public/directories-organization-2.png)
-![Screenshot of file explorer within a folder called "Done", containing one file named "Something something"](/public/directories-organization-3.png)
+现有环境升级到 v2 时运行 `db/supabase-schema-migration-v2.sql`（增量 migration，幂等可重复执行）。
 
-Sub-directories can also be opened as their own projects. In this example, by opening the app under `/backlog` path it will treat this directory as a different project, with its own lanes and tasks.
+## 📚 文档
 
-More details (and it how it looks within Obsidian) can be found [here](https://github.com/BaldissaraMatheus/Tasks.md/issues/49).
+- [docs/DEPLOY.md](docs/DEPLOY.md) - 部署指南（Netlify + Git 自动部署 + Supabase MCP）
+- [docs/architecture.md](docs/architecture.md) - 架构说明（React 迁移后）
+- [docs/KEYBOARD_SHORTCUTS.md](docs/KEYBOARD_SHORTCUTS.md) - 键盘快捷键
+- [AGENTS.md](AGENTS.md) - 仓库贡献指南 + 项目背景
 
-## 💻 Technology stack
-With the goal of having a good mix of performance and maintainability, the application was built with [SolidJS](https://github.com/solidjs/solid) and [Koa](https://github.com/koajs/koa). It also uses [Stacks-Editor](https://github.com/StackExchange/Stacks-Editor) for text editing and [serve-static](https://github.com/expressjs/serve-static) to serve the css files as-is.
+## 📝 License
 
-## 🔨 Contribute
-This is a low maintenance project. The scope of features and support are purposefully kept narrow to ensure longer term maintenance is viable. Issues and PRs raised for bugs and quality of life improvements are perfectly fine, just don’t do that for features that significantly increase the scope of the project.
-
-### Sponsor
-If you like the project, consider [becoming a sponsor](https://github.com/sponsors/BaldissaraMatheus) with a one-time donation!
-
+MIT（继承自原项目 Tasks.md）

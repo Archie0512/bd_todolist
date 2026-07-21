@@ -1,0 +1,39 @@
+# Netlify 构建配置
+# 文档：https://docs.netlify.com/configure-builds/file-based-configuration/
+#
+# 部署流程：
+#   1. 把仓库连接到 Netlify（Add new site -> Import from Git）
+#   2. Netlify 自动读取本文件，无需手工配置 build command
+#   3. 设置环境变量 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY
+#   4. git push 即自动触发部署
+#
+# 详细部署步骤见 docs/DEPLOY.md
+
+[build]
+  base = "frontend/"
+  command = "npm run build -- --base=./"
+  publish = "dist/"
+
+[build.environment]
+  NODE_VERSION = "20"
+  # 在 Netlify 后台 Site settings > Environment variables 设置以下两个变量：
+  # VITE_SUPABASE_URL
+  # VITE_SUPABASE_ANON_KEY
+
+# SPA 路由 fallback：所有路径回退到 index.html
+# 替代手工 _redirects 文件（Netlify 会自动生成）
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# 静态资源缓存（带 hash 的文件可长期缓存）
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/favicon/*"
+  [headers.values]
+    Cache-Control = "public, max-age=604800"
