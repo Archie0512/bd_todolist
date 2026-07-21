@@ -6,11 +6,19 @@
 --   2. 调整原 lanes 的 sort_order（未完成 3、已完成 4、长期 5）
 --   3. 扩展匿名 RLS：允许匿名用户对「退回」列的卡片进行 INSERT/UPDATE/DELETE
 --   4. 新建 card_status_logs 表（完成/退回备注历史）
---   5. 新建 card-images Storage Bucket + RLS
+--   5. card-images Storage Bucket + RLS（分两步，见第 4 节注释）
 --   6. 扩展 cards_with_details 视图（加入最近一次完成/退回备注）
 --
--- 执行方式：在 Supabase SQL Editor 全文粘贴执行
--- 幂等性：所有语句含 IF NOT EXISTS / ON CONFLICT 守卫，可重复执行
+-- 执行方式：分两步
+--   【步骤 A】本 SQL 文件前 1/2/3/5/6 节可在 Supabase SQL Editor 全文粘贴执行
+--            （lanes 调整、RLS 扩展、card_status_logs 建表、视图扩展）
+--   【步骤 B】第 4 节 storage 部分：
+--            - 先在 Dashboard -> Storage -> New bucket 创建 card-images（public）
+--              （用 SQL 创建 bucket 会报 RLS 错，必须走 UI）
+--            - 再在 SQL Editor 执行本文件第 4 节的 5 条 CREATE POLICY
+--              （不要执行 ALTER TABLE storage.objects ENABLE RLS，会报权限错且本就多余）
+--
+-- 幂等性：所有语句含 IF NOT EXISTS / ON CONFLICT / DROP POLICY IF EXISTS 守卫，可重复执行
 -- ============================================================
 
 -- ============================================================
@@ -99,16 +107,23 @@ CREATE INDEX IF NOT EXISTS idx_status_logs_card_id ON card_status_logs(card_id, 
 
 
 -- ============================================================
--- 4. 新建 card-images Storage Bucket + RLS
+-- 4. card-images Storage Bucket + RLS
+-- ------------------------------------------------------------
+-- ⚠️ 重要：本节需要拆成两步执行，不能全在 SQL Editor 跑！
+--
+-- 【步骤 A：在 Supabase Dashboard UI 创建 bucket】
+--   用 SQL 创建 storage bucket 会报错：
+--     ERROR: new row violates row-level security policy for table "buckets"
+--   原因：storage.buckets 表本身有 RLS，postgres 角色不是 owner。
+--   操作：打开 Dashboard -> Storage -> New bucket
+--     - Name: card-images
+--     - Public bucket: ✅ 打开
+--     - Save
+--
+-- 【步骤 B：下面的 5 条 CREATE POLICY 可以在 SQL Editor 跑】
+--   注意：不要写 `ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY`
+--   那行会报 `must be owner of table objects`，且 Supabase 新版默认已启用 RLS，无需 ALTER。
 -- ============================================================
-
--- 4.1 创建 bucket（public = 公开读，前端可通过 getPublicUrl 直接访问）
-INSERT INTO storage.buckets (id, name, public)
-VALUES ('card-images', 'card-images', true)
-ON CONFLICT (id) DO UPDATE SET public = EXCLUDED.public;
-
--- 4.2 Storage RLS 策略（注意：storage.objects 表的 RLS，不是 cards 表）
-ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
 
 -- 所有人可读（public bucket 的标准策略，getPublicUrl 才能访问到）
 CREATE POLICY images_select_all ON storage.objects
@@ -213,8 +228,8 @@ GROUP BY c.id, l.name,
 -- card_status_logs 表应存在且 RLS 已启用
 -- SELECT tablename, rowsecurity FROM pg_tables WHERE tablename = 'card_status_logs';
 
--- storage bucket 应存在且 public=true
+-- card-images bucket 应存在且 public=true（前提：步骤 A 已在 Dashboard 创建）
 -- SELECT id, name, public FROM storage.buckets WHERE id = 'card-images';
 
--- cards_with_details 视图应包含新增的备注字段
+-- cards_with_details 视图应包含 8 个 last_* 字段（last_completion_remark/at/by、last_return_remark/at/by、last_status_change_at，外加原有的 last_moved_at）
 -- SELECT column_name FROM information_schema.columns WHERE table_name = 'cards_with_details' AND column_name LIKE 'last_%';

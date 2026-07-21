@@ -1,8 +1,14 @@
 -- ============================================================
 -- Tasks.md - Supabase Database Schema（主 schema，全量）
--- 在 Supabase SQL Editor 中运行以初始化全新数据库
--- 已包含：6 个 lanes（含「退回」）、card_status_logs、card-images bucket、扩展视图
+-- 用于初始化全新数据库
+-- 已包含：6 个 lanes（含「退回」）、card_status_logs、card-images bucket policy、扩展视图
 -- 日期：2026-07-21
+--
+-- ⚠️ 执行方式（重要，不能全文粘贴一次跑完）：
+--   【步骤 A】在 Dashboard -> Storage -> New bucket 创建 card-images（public）
+--            （用 SQL 创建 bucket 会报 RLS 错，必须走 UI，详见第 5 节注释）
+--   【步骤 B】本 SQL 文件全文可在 SQL Editor 粘贴执行
+--            （storage bucket 的 INSERT 已从 SQL 中移除，只保留 CREATE POLICY）
 -- ============================================================
 
 -- 1. Create tables
@@ -87,7 +93,9 @@ ALTER TABLE tags ENABLE ROW LEVEL SECURITY;
 ALTER TABLE card_tags ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sort_orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE card_status_logs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+-- 注意：不要写 `ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY`
+-- 那行会报 `must be owner of table objects`，且 Supabase 新版默认已启用 storage RLS，无需 ALTER。
+-- storage bucket 的创建和 policy 见下方第 5 节末尾的说明。
 
 -- 5. RLS Policies
 
@@ -162,10 +170,22 @@ CREATE POLICY status_logs_select_all ON card_status_logs FOR SELECT USING (true)
 CREATE POLICY status_logs_insert_auth ON card_status_logs FOR INSERT TO authenticated WITH CHECK (true);
 CREATE POLICY status_logs_delete_auth ON card_status_logs FOR DELETE TO authenticated USING (true);
 
--- card-images Storage Bucket RLS（图片公开读，登录和匿名均可写，删除仅管理员）
-INSERT INTO storage.buckets (id, name, public)
-VALUES ('card-images', 'card-images', true)
-ON CONFLICT (id) DO UPDATE SET public = EXCLUDED.public;
+-- card-images Storage Bucket + RLS
+-- ------------------------------------------------------------
+-- ⚠️ 重要：storage bucket 必须在 Supabase Dashboard UI 创建，不能用 SQL！
+--   用 SQL `INSERT INTO storage.buckets` 会报：
+--     ERROR: new row violates row-level security policy for table "buckets"
+--   原因：storage.buckets 表本身有 RLS，postgres 角色不是 owner。
+--
+-- 操作步骤：
+--   1. 打开 Dashboard -> Storage -> New bucket
+--      - Name: card-images
+--      - Public bucket: ✅ 打开
+--      - Save
+--   2. bucket 创建后，下面的 5 条 CREATE POLICY 可以在本 SQL Editor 跑
+--      （注意：不要执行 `ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY`，
+--       会报 `must be owner of table objects`，且本就多余）
+-- ------------------------------------------------------------
 
 CREATE POLICY images_select_all ON storage.objects
   FOR SELECT
