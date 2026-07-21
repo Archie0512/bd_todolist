@@ -1,6 +1,8 @@
 -- ============================================================
--- Tasks.md - Supabase Database Schema
--- Run this in Supabase SQL Editor
+-- Tasks.md - Supabase Database Schema（主 schema，全量）
+-- 在 Supabase SQL Editor 中运行以初始化全新数据库
+-- 已包含：6 个 lanes（含「退回」）、card_status_logs、card-images bucket、扩展视图
+-- 日期：2026-07-21
 -- ============================================================
 
 -- 1. Create tables
@@ -43,13 +45,28 @@ CREATE TABLE IF NOT EXISTS sort_orders (
   sort_data JSONB DEFAULT '{}'
 );
 
--- 2. Insert default lanes
+-- 完成/退回备注历史表（2026-07-21 新增）
+CREATE TABLE IF NOT EXISTS card_status_logs (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  card_id UUID NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+  -- action: 'complete' = 完成（移到「已完成」），'return' = 退回（移到「退回」）
+  action TEXT NOT NULL CHECK (action IN ('complete', 'return')),
+  remark TEXT NOT NULL DEFAULT '',
+  -- 操作人邮箱：登录用户填邮箱，匿名场景留 NULL
+  actor_email TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_status_logs_card_id ON card_status_logs(card_id, created_at DESC);
+
+-- 2. Insert default lanes（含「退回」，sort_order=2）
 INSERT INTO lanes (name, sort_order) VALUES
   ('即时', 0),
   ('待分配', 1),
-  ('未完成', 2),
-  ('已完成', 3),
-  ('长期', 4)
+  ('退回', 2),
+  ('未完成', 3),
+  ('已完成', 4),
+  ('长期', 5)
 ON CONFLICT (name) DO NOTHING;
 
 -- 3. Insert default tags
@@ -69,6 +86,8 @@ ALTER TABLE cards ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tags ENABLE ROW LEVEL SECURITY;
 ALTER TABLE card_tags ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sort_orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE card_status_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
 
 -- 5. RLS Policies
 
@@ -84,48 +103,47 @@ CREATE POLICY "tags_insert_admin" ON tags FOR INSERT TO authenticated WITH CHECK
 CREATE POLICY "tags_update_admin" ON tags FOR UPDATE TO authenticated USING (true);
 CREATE POLICY "tags_delete_admin" ON tags FOR DELETE TO authenticated USING (true);
 
--- Cards: 
+-- Cards:
 --   - Everyone can read all cards
---   - Anonymous users can INSERT cards only into "待分配" lane
---   - Anonymous users can UPDATE cards only in "待分配" lane
+--   - Anonymous users can INSERT/UPDATE/DELETE cards only in "待分配" or "退回" lane
 --   - Authenticated (admin) can do everything
 CREATE POLICY "cards_select_all" ON cards FOR SELECT USING (true);
 
--- Anonymous insert: only into 待分配 lane, mark as submitted
-CREATE POLICY "cards_insert_anon_pending" ON cards FOR INSERT 
-  TO anon 
+-- Anonymous insert: only into 待分配 or 退回 lane
+CREATE POLICY cards_insert_anon_pending ON cards FOR INSERT
+  TO anon
   WITH CHECK (
-    lane_id IN (SELECT id FROM lanes WHERE name = '待分配')
+    lane_id IN (SELECT id FROM lanes WHERE name IN ('待分配', '退回'))
   );
 
-CREATE POLICY "cards_insert_admin" ON cards FOR INSERT 
-  TO authenticated 
+CREATE POLICY "cards_insert_admin" ON cards FOR INSERT
+  TO authenticated
   WITH CHECK (true);
 
--- Anonymous update: only cards in 待分配 lane
-CREATE POLICY "cards_update_anon_pending" ON cards FOR UPDATE 
-  TO anon 
+-- Anonymous update: only cards in 待分配 or 退回 lane
+CREATE POLICY cards_update_anon_pending ON cards FOR UPDATE
+  TO anon
   USING (
-    lane_id IN (SELECT id FROM lanes WHERE name = '待分配')
+    lane_id IN (SELECT id FROM lanes WHERE name IN ('待分配', '退回'))
   )
   WITH CHECK (
-    lane_id IN (SELECT id FROM lanes WHERE name = '待分配')
+    lane_id IN (SELECT id FROM lanes WHERE name IN ('待分配', '退回'))
   );
 
-CREATE POLICY "cards_update_admin" ON cards FOR UPDATE 
-  TO authenticated 
+CREATE POLICY "cards_update_admin" ON cards FOR UPDATE
+  TO authenticated
   USING (true)
   WITH CHECK (true);
 
--- Anonymous delete: only cards in 待分配 lane
-CREATE POLICY "cards_delete_anon_pending" ON cards FOR DELETE 
-  TO anon 
+-- Anonymous delete: only cards in 待分配 or 退回 lane
+CREATE POLICY cards_delete_anon_pending ON cards FOR DELETE
+  TO anon
   USING (
-    lane_id IN (SELECT id FROM lanes WHERE name = '待分配')
+    lane_id IN (SELECT id FROM lanes WHERE name IN ('待分配', '退回'))
   );
 
-CREATE POLICY "cards_delete_admin" ON cards FOR DELETE 
-  TO authenticated 
+CREATE POLICY "cards_delete_admin" ON cards FOR DELETE
+  TO authenticated
   USING (true);
 
 -- card_tags: everyone can read, only admin can write
@@ -139,6 +157,42 @@ CREATE POLICY "sort_orders_insert_admin" ON sort_orders FOR INSERT TO authentica
 CREATE POLICY "sort_orders_update_admin" ON sort_orders FOR UPDATE TO authenticated USING (true);
 CREATE POLICY "sort_orders_delete_admin" ON sort_orders FOR DELETE TO authenticated USING (true);
 
+-- card_status_logs: 所有人可读，仅登录用户可写入/删除（完成/退回仅管理员触发）
+CREATE POLICY status_logs_select_all ON card_status_logs FOR SELECT USING (true);
+CREATE POLICY status_logs_insert_auth ON card_status_logs FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY status_logs_delete_auth ON card_status_logs FOR DELETE TO authenticated USING (true);
+
+-- card-images Storage Bucket RLS（图片公开读，登录和匿名均可写，删除仅管理员）
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('card-images', 'card-images', true)
+ON CONFLICT (id) DO UPDATE SET public = EXCLUDED.public;
+
+CREATE POLICY images_select_all ON storage.objects
+  FOR SELECT
+  USING (bucket_id = 'card-images');
+
+CREATE POLICY images_insert_auth ON storage.objects
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (bucket_id = 'card-images');
+
+-- 匿名上传（同事提交待办附图）：客户端校验卡片必须在「待分配」或「退回」列
+CREATE POLICY images_insert_anon ON storage.objects
+  FOR INSERT
+  TO anon
+  WITH CHECK (bucket_id = 'card-images');
+
+CREATE POLICY images_delete_auth ON storage.objects
+  FOR DELETE
+  TO authenticated
+  USING (bucket_id = 'card-images');
+
+CREATE POLICY images_update_auth ON storage.objects
+  FOR UPDATE
+  TO authenticated
+  USING (bucket_id = 'card-images')
+  WITH CHECK (bucket_id = 'card-images');
+
 -- 6. Create updated_at trigger for cards
 CREATE OR REPLACE FUNCTION update_updated_at()
 RETURNS TRIGGER AS $$
@@ -148,14 +202,15 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER cards_updated_at 
+CREATE TRIGGER cards_updated_at
   BEFORE UPDATE ON cards
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at();
 
--- 7. Create a view for easy card+lane+tags querying
+-- 7. Create a view for easy card+lane+tags+status_logs querying
+--    加入最近一次完成/退回备注（LATERAL 子查询取每个 card 最近一条）
 CREATE OR REPLACE VIEW cards_with_details AS
-SELECT 
+SELECT
   c.id,
   c.name,
   c.content,
@@ -172,9 +227,38 @@ SELECT
       JSON_BUILD_OBJECT('name', t.name, 'backgroundColor', t.color)
     ) FILTER (WHERE t.name IS NOT NULL),
     ARRAY[]::JSON[]
-  ) AS tags
+  ) AS tags,
+  -- 最近一次「完成」备注
+  cl_complete.remark AS last_completion_remark,
+  cl_complete.created_at AS last_completion_at,
+  cl_complete.actor_email AS last_completion_by,
+  -- 最近一次「退回」备注
+  cl_return.remark AS last_return_remark,
+  cl_return.created_at AS last_return_at,
+  cl_return.actor_email AS last_return_by,
+  -- 任意状态的最近一次变更时间
+  GREATEST(
+    cl_complete.created_at,
+    cl_return.created_at
+  ) AS last_status_change_at
 FROM cards c
 JOIN lanes l ON c.lane_id = l.id
 LEFT JOIN card_tags ct ON ct.card_id = c.id
 LEFT JOIN tags t ON ct.tag_id = t.id
-GROUP BY c.id, l.name;
+LEFT JOIN LATERAL (
+  SELECT remark, created_at, actor_email
+  FROM card_status_logs
+  WHERE card_id = c.id AND action = 'complete'
+  ORDER BY created_at DESC
+  LIMIT 1
+) cl_complete ON true
+LEFT JOIN LATERAL (
+  SELECT remark, created_at, actor_email
+  FROM card_status_logs
+  WHERE card_id = c.id AND action = 'return'
+  ORDER BY created_at DESC
+  LIMIT 1
+) cl_return ON true
+GROUP BY c.id, l.name,
+  cl_complete.remark, cl_complete.created_at, cl_complete.actor_email,
+  cl_return.remark, cl_return.created_at, cl_return.actor_email;
