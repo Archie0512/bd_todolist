@@ -352,7 +352,7 @@ function App() {
     if (active.data.current?.type === "card") {
       const fromLane = active.data.current.fromLane;
       const cardId = active.id;
-      let toLane = over.data.current?.laneName;
+      let toLane = over.data.current?.fromLane;
       let newIndex = over.data.current?.index;
       if (over.data.current?.type === "lane-content") {
         toLane = over.data.current.laneName;
